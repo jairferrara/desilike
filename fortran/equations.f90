@@ -1008,7 +1008,10 @@
 
     end subroutine SwitchToMassiveNuApprox
 
-    subroutine MassiveNuVarsOut(EV,y,yprime,a,adotoa,grho,gpres,dgrho,dgq,dgpi, dgpi_diff,pidot_sum,clxnu_all)
+    !> ISiTGR MOD START: Modifying subroutine to compute extra terms
+    subroutine MassiveNuVarsOut(EV,y,yprime,a,adotoa,grho,gpres,dgrho,dgq,dgpi, dgpi_diff,pidot_sum,clxnu_all, &
+    dgpi_3wplus1,dgpi_3wplus2,dgpi_3wplus1plusbetak)
+    !< ISiTGR MOD END
     implicit none
     type(EvolutionVars) EV
     real(dl) :: y(EV%nvar), yprime(EV%nvar),a, adotoa
@@ -1020,7 +1023,11 @@
     !dgq = a^2 kappa q (heat flux)
     !dgpi = a^2 kappa pi (anisotropic stress)
     !dgpi_diff = a^2 kappa (3*p -rho)*pi
-
+	!> ISiTGR MOD START: adding new terms that contributes to MG
+	real(dl), optional :: dgpi_3wplus1 !dgpi_3wplus1 = a^2 kappa (3w+1)*rho*pi !CGQ
+    real(dl), optional :: dgpi_3wplus2 !dgpi_3wplus2 = a^2 kappa (3w+2)*rho*pi !CGQ
+    real(dl), optional :: dgpi_3wplus1plusbetak !dgpi_3wplus1plusbetak = a^2 kappa (3w+1+betak)*rho*pi !CGQ
+	!< ISiTGR MOD END
     integer nu_i
     real(dl) pinudot,grhormass_t, rhonu, pnu,  rhonudot
     real(dl) grhonu_t,gpnu_t
@@ -1065,6 +1072,12 @@
         if (present(dgpi)) dgpi = dgpi  + grhonu_t*pinu
         if (present(dgpi_diff)) dgpi_diff = dgpi_diff + pinu*(3*gpnu_t-grhonu_t)
         if (present(pidot_sum)) pidot_sum = pidot_sum + grhonu_t*pinudot
+		!>ISiTGR MOD START: computing (3*w+2)*rho*Pi !CGQ
+		if (present(dgpi_3wplus1)) dgpi_3wplus1 = dgpi_3wplus1 + grhonu_t*pinu * (3.d0*(pnu/rhonu) + 1.d0)
+        if (present(dgpi_3wplus2)) dgpi_3wplus2 = dgpi_3wplus2 + grhonu_t*pinu * (3.d0*(pnu/rhonu) + 2.d0)
+        if (present(dgpi_3wplus1plusbetak)) dgpi_3wplus1plusbetak = dgpi_3wplus1plusbetak + grhonu_t*pinu * &
+			(3.d0*(pnu/rhonu) + 1.d0 + 1.d0/EV%Kf(1))
+		!<ISiTGR MOD END
     end do
     if (present(grho)) grho = grho  + grhonu
     if (present(dgrho)) dgrho= dgrho + dgrhonu
@@ -2137,6 +2150,573 @@
 
     end subroutine outtransf
 
+	!> ISiTGR MOD START
+    !################### Modified Gravity Functions of ISiTGR Parameters #####################
+    function ISiTGR_mu(State,k,a,adotoa)
+    use constants
+    use results
+    use classes
+    class(CAMBdata), intent(in) :: State
+    real(dl), intent(in) :: k, a, adotoa
+    real(dl) ISiTGR_mu
+    real(dl) :: s1_k, s2_k
+    real(dl) :: F_k
+    real(dl) :: mu_MG, omegav, omegam_t, omegak_t, gamma, gammastar !star denotes derivative with respect to natural logarithm of the scale factor (so no adotoa=(da/dtau)/a is present)
+    !binning method expression
+    if((CP%ISiTGR_BIN_mueta) .or. (CP%ISiTGR_BIN_muSigma)) then
+        if (CP%ISiTGR_BIN_scale_bins) then
+            !ISiTGR_mu = (1+ISiTGR_mu_Z1(k) +(ISiTGR_mu_Z2(k)-ISiTGR_mu_Z1(k))*tanh((1.d0/a-1.d0-CP%z_div)/CP%z_tw) &
+            !+(1-ISiTGR_mu_Z2(k))*tanh((1.d0/a-1.d0-CP%z_TGR)/CP%z_tw))/2.d0
+            ISiTGR_mu = (1.d0 + ISiTGR_mu_Z1(k) + (ISiTGR_mu_Z2(k) - ISiTGR_mu_Z1(k)) * tanh((1.d0/a-1.d0-CP%z_div)/CP%z_tw) &
+            + (1.d0 - ISiTGR_mu_Z2(k)) * tanh((1.d0/a-1.d0-CP%z_TGR)/CP%z_tw)) / 2.d0
+        else
+            !example: if z_TGR=2.0 then splits into 4 redshifts equally spaced (0.5, 1.0, 1.5, 2.0)
+            ISiTGR_mu = (1.d0+CP%mu1)/2.d0 + (CP%mu2-CP%mu1)/2.d0*tanh((1.d0/a-1.d0-CP%z_TGR/4.0)/CP%z_tw) &
+            + (CP%mu3-CP%mu2)/2.d0*tanh((1.d0/a-1.d0-2.d0*CP%z_TGR/4.0)/CP%z_tw) + (CP%mu4-CP%mu3)/2.d0 * &
+            tanh((1.d0/a-1.d0-3.d0*CP%z_TGR/4.0)/CP%z_tw) + (1.d0-CP%mu4)/2.d0*tanh((1.d0/a-1.d0-CP%z_TGR)/CP%z_tw)
+        end if
+    !functional form expression
+    else if (CP%ISiTGR_mueta) then
+        if (CP%ISiTGR_gammaL_noslip) then
+            if (CP%ISiTGR_growth_index_Taylor) then
+                gamma = CP%gamma_0 + CP%gamma_a * (1.d0-a)
+                gammastar = - CP%gamma_a * a
+            else if (CP%ISiTGR_growth_index_Wen) then
+                gamma = CP%gamma_0 + CP%gamma_a * (1.d0 - a) * (1.d0/a - 1.d0) ! note: this is equivalent to z^2/(1+z).
+                gammastar = CP%gamma_a * (a - 1.d0/a)
+            else
+                gamma = CP%gamma_0
+                gammastar = 0
+            end if
+            ! add time-dependence main factor for mu(gamma(a))
+            omegak_t = OmegaCurvature(State,a,adotoa)
+            omegam_t = OmegaMatter(State,a,adotoa)
+            mu_MG = 2.d0/3.d0 * omegam_t**(gamma-1.d0) * ( omegam_t**gamma + (2.d0 - 3.d0 * gamma) + 3.d0 * (gamma - 0.5d0) * omegam_t + (2.d0 * gamma - 1.d0) * omegak_t + gammastar*log(omegam_t) )
+            ! add scale dependence (growth-index damping)
+            if (CP%ISiTGR_gammaL_yukawa_damping) then
+                ! Yukawa-like gate:
+                !   F_k = [ k^2 / ( k^2 + (alpha * Hconf)^2 ) ]^n
+                ! where alpha = CP%t_k, n = CP%d_s, Hconf = adotoa = a'/a
+                F_k = ( (k*k) / ( k*k + (CP%t_k*adotoa)**2.d0 ) )**CP%d_s
+            else
+                ! binning-like transition (tanh gate)
+                F_k = 0.5d0 * ( 1.d0 + tanh( ( k - CP%t_k * adotoa ) / CP%d_s ) )
+            end if
+            mu_MG = 1.d0 + (mu_MG - 1.d0) * F_k
+        else if (CP%ISiTGR_BZ_mueta) then
+            mu_MG = (1.d0 + CP%beta_1 * CP%lambda_1 * CP%lambda_1 * k * k * a**CP%exp_s) / (1.d0 + CP%lambda_1 * CP%lambda_1 * k * k * a**CP%exp_s)
+        else
+            !adding functions for scale dependence
+            s2_k = (CP%lambda_k*(adotoa/a)/k)**2.d0 !s2_k needed to get s1_k
+            s1_k = (1.d0+CP%c1*s2_k)/(1.d0+s2_k) !function s1_k puts scale dependence into the mu parameter
+            !computing E11 as in Planck 2015 parameterization
+            mu_MG = 1.d0 + CP%E11 * OmegaDE(State,a,adotoa) * s1_k
+        end if
+        ISiTGR_mu = mu_MG
+    !functional form expression
+    else if (CP%ISiTGR_muSigma) then
+        if (CP%ISiTGR_gammaL_onlygrowth) then
+            if (CP%ISiTGR_growth_index_Taylor) then
+                gamma = CP%gamma_0 + CP%gamma_a * (1.d0-a)
+                gammastar = - CP%gamma_a * a
+            else if (CP%ISiTGR_growth_index_Wen) then
+                gamma = CP%gamma_0 + CP%gamma_a * (1.d0 - a) * (1.d0/a - 1.d0) ! note: this is equivalent to z^2/(1+z).
+                gammastar = CP%gamma_a * (a - 1.d0/a)
+            else
+                gamma = CP%gamma_0
+                gammastar = 0
+            end if
+            ! add time-dependence main factor for mu(gamma(a))
+            omegak_t = OmegaCurvature(State,a,adotoa)
+            omegam_t = OmegaMatter(State,a,adotoa)
+            mu_MG = 2.d0/3.d0 * omegam_t**(gamma-1.d0) * ( omegam_t**gamma + (2.d0 - 3.d0 * gamma) + 3.d0 * (gamma - 0.5d0) * omegam_t + (2.d0 * gamma - 1.d0) * omegak_t + gammastar*log(omegam_t) )
+            ! add scale dependence (growth-index damping)
+            if (CP%ISiTGR_gammaL_yukawa_damping) then
+                ! Yukawa-like gate:
+                !   F_k = [ k^2 / ( k^2 + (alpha * Hconf)^2 ) ]^n
+                ! where alpha = CP%t_k, n = CP%d_s, Hconf = adotoa = a'/a
+                F_k = ( (k*k) / ( k*k + (CP%t_k*adotoa)**2.d0 ) )**CP%d_s
+            else
+                ! binning-like transition (tanh gate)
+                F_k = 0.5d0 * ( 1.d0 + tanh( ( k - CP%t_k * adotoa ) / CP%d_s ) )
+            end if
+            mu_MG = 1.d0 + (mu_MG - 1.d0) * F_k
+        else
+            omegav = State%Omega_de ! Omega_de is total dark energy density today
+            !adding an extra factor for scale dependence
+            s2_k = (CP%lambda_k*(adotoa/a)/k)**2.d0
+            s1_k = (1.d0+CP%c1*s2_k)/(1.d0+s2_k)
+            !computed mu as in DES 2018 paper adding scale dependence
+            mu_MG = 1.d0 + CP%mu0 * (OmegaDE(State,a,adotoa)/omegav) * s1_k !when CP%lambda_k=0 original DES parameterization is recovered
+        end if
+        ISiTGR_mu = mu_MG
+    end if
+    end function ISiTGR_mu
+    
+    function ISiTGR_mu_dot(State,k,a,adotoa,Hdot)
+    use constants
+    use results
+    use classes
+    class(CAMBdata), intent(in) :: State
+    real(dl), intent(in) :: k, a, adotoa, Hdot
+    real(dl) ISiTGR_mu_dot
+    real(dl) :: mudot_MG, mu_MG, mu_MG_undamped, mudot_MG_undamped, mu_MG_pivot, mudot_MG_pivot
+    real(dl) :: F_k, Fdot_k
+    real(dl) :: s1_k, s2_k, s1_k_dot, s2_k_dot, omegav, omegam_t, omegak_t, gamma, gammastar, gammastarstar, term1, term2, term3 !star denotes derivative with respect to natural logarithm of the scale factor (so no adotoa=(da/dtau)/a is present)
+    
+    !binning method expression
+    if((CP%ISiTGR_BIN_mueta) .or. (CP%ISiTGR_BIN_muSigma)) then
+        if (CP%ISiTGR_BIN_scale_bins) then
+            ISiTGR_mu_dot = adotoa/2.d0/CP%z_tw/a*((ISiTGR_mu_Z1(k)-ISiTGR_mu_Z2(k))/cosh((1.d0/a-1.d0-CP%z_div)/CP%z_tw)**2.d0 &
+            +(ISiTGR_mu_Z2(k)-1)/cosh((1.d0/a-1.d0-CP%z_TGR)/CP%z_tw)**2.d0)
+        else
+            ISiTGR_mu_dot = adotoa/2.d0/CP%z_tw/a*( (CP%mu1-CP%mu2)/cosh((1.d0/a-1.d0-CP%z_TGR/4.0)/CP%z_tw)**2.d0 &
+            + (CP%mu2-CP%mu3)/cosh((1.d0/a-1.d0-2.d0*CP%z_TGR/4.0)/CP%z_tw)**2.d0 + &
+            + (CP%mu3-CP%mu4)/cosh((1.d0/a-1.d0-3.d0*CP%z_TGR/4.0)/CP%z_tw)**2.d0 &
+            + (CP%mu4-1.d0)/cosh((1.d0/a-1.d0-CP%z_TGR)/CP%z_tw)**2.d0 )
+        end if
+    !functional form expression
+    else if (CP%ISiTGR_mueta) then
+        if (CP%ISiTGR_gammaL_noslip) then
+            if (CP%ISiTGR_growth_index_Taylor) then
+                gamma = CP%gamma_0 + CP%gamma_a * (1.d0-a)
+                gammastar = - CP%gamma_a * a
+                gammastarstar = - CP%gamma_a * a
+            else if (CP%ISiTGR_growth_index_Wen) then
+                gamma = CP%gamma_0 + CP%gamma_a * (1.d0 - a) * (1.d0/a - 1.d0) ! note: this is equivalent to z^2/(1+z).
+                gammastar = CP%gamma_a * (a - 1.d0/a)
+                gammastarstar = CP%gamma_a * (a + 1.d0/a)
+            else
+                gamma = CP%gamma_0
+                gammastar = 0
+                gammastarstar = 0
+            end if
+            ! Get Omegam and Omegam'
+            omegak_t = OmegaCurvature(State,a,adotoa)
+            omegam_t = OmegaMatter(State,a,adotoa)
+            mu_MG_undamped = 2.d0/3.d0 * omegam_t**(gamma-1.d0) * ( omegam_t**gamma + (2.d0 - 3.d0 * gamma) + 3.d0 * (gamma - 0.5d0) * omegam_t + (2.d0 * gamma - 1.d0) * omegak_t + gammastar*log(omegam_t) )
+            term1 = gammastar * log(omegam_t) + (gamma - 1.d0) * (-3.d0 + 3.d0 * omegam_t + 2.d0 * omegak_t)
+            mudot_MG_undamped = mu_MG_undamped * term1 + 2.d0/3.d0*omegam_t**(gamma-1) &
+                * (omegam_t**gamma * (gammastar*log(omegam_t) + gamma*(-3.d0+2.d0*omegak_t+3.d0*omegam_t)) & 
+                - 3.d0*gammastar + 3.d0*gammastar*omegam_t + 3.d0*(gamma-0.5d0)*omegam_t*(-3.d0+2.d0*omegak_t+3.d0*omegam_t) &
+                + 2.d0*gammastar*omegak_t + (2.d0*gamma-1.d0)*omegak_t*(-2.d0+3.d0*omegam_t+2.d0*omegak_t) &
+                + gammastarstar*log(omegam_t) + gammastar*(-3.d0+2.d0*omegak_t+3.d0*omegam_t))
+            mudot_MG_undamped = mudot_MG_undamped * adotoa 
+
+            ! Apply damping
+            if (CP%ISiTGR_gammaL_yukawa_damping) then
+                ! Yukawa-like gate:
+                !   F_k = [ k^2 / (k^2 + (CP%t_k * adotoa)^2 ) ]^(CP%d_s)
+                F_k = ( (k*k) / ( k*k + (CP%t_k*adotoa)**2.d0 ) )**CP%d_s
+                Fdot_k = CP%d_s * ( (k*k) / ( k*k + (CP%t_k*adotoa)**2.d0 ) )**(CP%d_s - 1.d0) * &
+                         ( -2.d0 * (k*k) * (CP%t_k*adotoa) * (CP%t_k*Hdot) / ( k*k + (CP%t_k*adotoa)**2.d0 )**2.d0 )
+            else
+                ! binning-like damping
+                F_k    = 0.5d0 * ( 1.d0 + tanh( ( k - CP%t_k * adotoa ) / CP%d_s ) )
+                Fdot_k = -0.5d0 * ( CP%t_k / CP%d_s ) * ( 1.d0 / cosh( ( k - CP%t_k * adotoa ) / CP%d_s )**2 ) * Hdot
+            end if
+            mu_MG_pivot = 1.d0
+            mudot_MG_pivot = 0.d0
+
+            mu_MG = mu_MG_pivot + (mu_MG_undamped - mu_MG_pivot) * F_k
+            mudot_MG = (1.d0 - F_k) * mudot_MG_pivot  + F_k * mudot_MG_undamped + (mu_MG_undamped - mu_MG_pivot) * Fdot_k
+
+            ! Old implementation...
+            !term1 = gammadot*log(omegam_t) + (1.d0-gamma)*(2.d0*Hdot/adotoa+adotoa)*omegam_t
+            !term2 = gammadotdot*log(omegam_t)+gammadot*(log(omegam_t)-1.d0-2.d0*Hdot/adotoa-omegam_t*(2.d0*Hdot/adotoa+adotoa))
+            !term3 = (1.d0-2.d0*gamma)*(Hdot/adotoa*(3.d0*omegam_t+omegak_t)+3.d0/2.d0*adotoa*omegam_t)-gamma*omegam_t*(2*Hdot/adotoa+adotoa)
+            !mudot_MG = mu_MG*term1 + term2*term3
+            ! define pivot for mu
+            !term2 = (0.545454d0 - 1.d0) * (-3.d0 + 3.d0 * omegam_t + 2.d0 * omegak_t)
+            !mu_MG_pivot = 2.d0/3.d0 * omegam_t**(0.545454d0-1.d0) * ( omegam_t**0.545454d0 + (2.d0 - 3.d0 * 0.545454d0) + 3.d0 * (0.545454d0 - 0.5d0) * omegam_t + (2.d0 * 0.545454d0 - 1.d0) * omegak_t)
+            !mudot_MG_pivot = mu_MG_pivot * term2 + 2.d0/3.d0*omegam_t**(0.545454d0-1) * (omegam_t**0.545454d0 * (0.545454d0*(-3.d0+2.d0*omegak_t+3.d0*omegam_t)) & 
+            !    + 3.d0*(0.545454d0-0.5d0)*omegam_t*(-3.d0+2.d0*omegak_t+3.d0*omegam_t) + (2.d0*0.545454d0-1.d0)*omegak_t*(-2.d0+3.d0*omegam_t+2.d0*omegak_t) )
+            !mudot_MG_pivot = mudot_MG_pivot * adotoa
+        else if (CP%ISiTGR_BZ_mueta) then
+            term1 = 1.d0 + CP%lambda_1 * CP%lambda_1 * k * k * a**CP%exp_s
+            mu_MG = (1.d0 + CP%beta_1 * CP%lambda_1 * CP%lambda_1 * k * k * a**CP%exp_s) / term1
+            mudot_MG = CP%exp_s * adotoa * (mu_MG - 1.d0)/term1
+        else
+              !adding an extra factor for scale dependence
+              s2_k = (CP%lambda_k*(adotoa/a)/k)**2.d0
+              s1_k = (1.d0+CP%c1*s2_k)/(1.d0+s2_k)
+              s2_k_dot = 2.d0*s2_k*(Hdot-adotoa**2.d0)/adotoa
+              s1_k_dot = s2_k_dot*(CP%c1-1.d0)/(1.d0+s2_k)**2.d0
+              mudot_MG = CP%E11*(OmegaDEdot(State,a,adotoa,Hdot)*s1_k + OmegaDE(State,a,adotoa)*s1_k_dot)
+        end if
+        ISiTGR_mu_dot = mudot_MG
+    !functional form expression
+    else if (CP%ISiTGR_muSigma) then
+        if (CP%ISiTGR_gammaL_onlygrowth) then
+            if (CP%ISiTGR_growth_index_Taylor) then
+                gamma = CP%gamma_0 + CP%gamma_a * (1.d0-a)
+                gammastar = - CP%gamma_a * a
+                gammastarstar = - CP%gamma_a * a
+            else if (CP%ISiTGR_growth_index_Wen) then
+                gamma = CP%gamma_0 + CP%gamma_a * (1.d0 - a) * (1.d0/a - 1.d0) ! note: this is equivalent to z^2/(1+z).
+                gammastar = CP%gamma_a * (a - 1.d0/a)
+                gammastarstar = CP%gamma_a * (a + 1.d0/a)
+            else
+                gamma = CP%gamma_0
+                gammastar = 0
+                gammastarstar = 0
+            end if
+            ! Get Omegam and Omegam'
+            omegak_t = OmegaCurvature(State,a,adotoa)
+            omegam_t = OmegaMatter(State,a,adotoa)
+            mu_MG_undamped = 2.d0/3.d0 * omegam_t**(gamma-1.d0) * ( omegam_t**gamma + (2.d0 - 3.d0 * gamma) + 3.d0 * (gamma - 0.5d0) * omegam_t + (2.d0 * gamma - 1.d0) * omegak_t + gammastar*log(omegam_t) )
+            term1 = gammastar * log(omegam_t) + (gamma - 1.d0) * (-3.d0 + 3.d0 * omegam_t + 2.d0 * omegak_t)
+            mudot_MG_undamped = mu_MG_undamped * term1 + 2.d0/3.d0*omegam_t**(gamma-1) &
+                * (omegam_t**gamma * (gammastar*log(omegam_t) + gamma*(-3.d0+2.d0*omegak_t+3.d0*omegam_t)) & 
+                - 3.d0*gammastar + 3.d0*gammastar*omegam_t + 3.d0*(gamma-0.5d0)*omegam_t*(-3.d0+2.d0*omegak_t+3.d0*omegam_t) &
+                + 2.d0*gammastar*omegak_t + (2.d0*gamma-1.d0)*omegak_t*(-2.d0+3.d0*omegam_t+2.d0*omegak_t) &
+                + gammastarstar*log(omegam_t) + gammastar*(-3.d0+2.d0*omegak_t+3.d0*omegam_t))
+            mudot_MG_undamped = mudot_MG_undamped * adotoa 
+
+            ! Apply damping
+            if (CP%ISiTGR_gammaL_yukawa_damping) then
+                ! Yukawa-like gate:
+                !   F_k = [ k^2 / (k^2 + (CP%t_k * adotoa)^2 ) ]^(CP%d_s)
+                F_k = ( (k*k) / ( k*k + (CP%t_k*adotoa)**2.d0 ) )**CP%d_s
+                Fdot_k = CP%d_s * ( (k*k) / ( k*k + (CP%t_k*adotoa)**2.d0 ) )**(CP%d_s - 1.d0) * &
+                         ( -2.d0 * (k*k) * (CP%t_k*adotoa) * (CP%t_k*Hdot) / ( k*k + (CP%t_k*adotoa)**2.d0 )**2.d0 )
+            else
+                ! binning-like damping
+                F_k    = 0.5d0 * ( 1.d0 + tanh( ( k - CP%t_k * adotoa ) / CP%d_s ) )
+                Fdot_k = -0.5d0 * ( CP%t_k / CP%d_s ) * ( 1.d0 / cosh( ( k - CP%t_k * adotoa ) / CP%d_s )**2 ) * Hdot
+            end if
+            mu_MG_pivot = 1.d0
+            mudot_MG_pivot = 0.d0
+
+            mu_MG = mu_MG_pivot + (mu_MG_undamped - mu_MG_pivot) * F_k
+            mudot_MG = (1.d0 - F_k) * mudot_MG_pivot  + F_k * mudot_MG_undamped + (mu_MG_undamped - mu_MG_pivot) * Fdot_k
+        else
+            omegav = State%Omega_de ! Omega_de is total dark energy density today
+            !adding an extra factor for scale dependence
+            s2_k = (CP%lambda_k*(adotoa/a)/k)**2.d0
+            s1_k = (1.d0+CP%c1*s2_k)/(1.d0+s2_k)
+            s2_k_dot = 2.d0*s2_k*(Hdot-adotoa**2.d0)/adotoa
+            s1_k_dot = s2_k_dot*(CP%c1-1.d0)/(1+s2_k)**2.d0
+            mudot_MG = CP%mu0*(OmegaDEdot(State,a,adotoa,Hdot)/omegav*s1_k + OmegaDE(State,a,adotoa)/omegav*s1_k_dot)
+        end if
+        ISiTGR_mu_dot = mudot_MG
+    end if
+    end function ISiTGR_mu_dot
+        
+    !---------------------------------------------------------------------
+    
+    function ISiTGR_eta(State,k,a,adotoa)
+    use constants
+    use classes
+    class(CAMBdata), intent(in) :: State
+    real(dl), intent(in) :: k, a,adotoa
+    real(dl) ISiTGR_eta
+    real(dl) :: s1_k, s2_k
+    real(dl) :: eta_MG
+    
+    !binning method expression
+    if(CP%ISiTGR_BIN_mueta) then
+        if (CP%ISiTGR_BIN_scale_bins) then
+            ISiTGR_eta = (1+ISiTGR_eta_Z1(k) +(ISiTGR_eta_Z2(k)-ISiTGR_eta_Z1(k))*tanh((1.d0/a-1.d0-CP%z_div)/CP%z_tw) &
+            +(1-ISiTGR_eta_Z2(k))*tanh((1.d0/a-1.d0-CP%z_TGR)/CP%z_tw))/2.d0
+        else
+            !example: if z_TGR=2.0 then splits into 4 redshifts equally spaced (0.5, 1.0, 1.5, 2.0)
+            ISiTGR_eta = (1.d0+CP%eta1)/2.d0 + (CP%eta2-CP%eta1)/2.d0*tanh((1.d0/a-1.d0-CP%z_TGR/4.0)/CP%z_tw) &
+            + (CP%eta3-CP%eta2)/2.d0*tanh((1.d0/a-1.d0-2.d0*CP%z_TGR/4.0)/CP%z_tw) + (CP%eta4-CP%eta3)/2.d0 * &
+            tanh((1.d0/a-1.d0-3.d0*CP%z_TGR/4.0)/CP%z_tw) + (1.d0-CP%eta4)/2.d0*tanh((1.d0/a-1.d0-CP%z_TGR)/CP%z_tw)
+        end if
+    !functional form expression
+    else
+        if (CP%ISiTGR_gammaL_noslip) then
+            eta_MG = 1.d0
+        else if (CP%ISiTGR_BZ_mueta) then
+            eta_MG = (1.d0 + CP%beta_2 * CP%lambda_2 * CP%lambda_2 * k * k * a**CP%exp_s) / (1.d0 + CP%lambda_2 * CP%lambda_2 * k * k * a**CP%exp_s)
+        else
+            !adding an extra factor for scale dependence
+            s2_k = (CP%lambda_k*(adotoa/a)/k)**2.d0
+            s1_k = (1.d0+CP%c2*s2_k)/(1.d0+s2_k)
+            !scale dependent
+            eta_MG = 1.d0 + CP%E22 * OmegaDE(State,a,adotoa) * s1_k
+        end if
+        ISiTGR_eta = eta_MG
+    end if
+    
+    end function ISiTGR_eta
+    
+    function ISiTGR_eta_dot(State,k,a,adotoa,Hdot)
+    use constants
+    use classes
+    class(CAMBdata), intent(in) :: State
+    real(dl), intent(in) :: k, a,adotoa, Hdot
+    real(dl) ISiTGR_eta_dot
+    real(dl) :: etadot_MG
+    real(dl) :: s1_k, s2_k, s1_k_dot, s2_k_dot, term1, term2, term3, eta_MG
+    
+    !binning method expression
+    if(CP%ISiTGR_BIN_mueta) then
+          if (CP%ISiTGR_BIN_scale_bins) then
+            ISiTGR_eta_dot = adotoa/2.d0/CP%z_tw/a*((ISiTGR_eta_Z1(k)-ISiTGR_eta_Z2(k))/cosh((1.d0/a-1.d0-CP%z_div)/CP%z_tw)**2.d0 &
+            +(ISiTGR_eta_Z2(k)-1)/cosh((1.d0/a-1.d0-CP%z_TGR)/CP%z_tw)**2.d0)
+          else
+            ISiTGR_eta_dot = adotoa/2.d0/CP%z_tw/a*( (CP%eta1-CP%eta2)/cosh((1.d0/a-1.d0-CP%z_TGR/4.0)/CP%z_tw)**2.d0 &
+            + (CP%eta2-CP%eta3)/cosh((1.d0/a-1.d0-2.d0*CP%z_TGR/4.0)/CP%z_tw)**2.d0 + &
+            + (CP%eta3-CP%eta4)/cosh((1.d0/a-1.d0-3.d0*CP%z_TGR/4.0)/CP%z_tw)**2.d0 &
+            + (CP%eta4-1.d0)/cosh((1.d0/a-1.d0-CP%z_TGR)/CP%z_tw)**2.d0 )
+          end if
+    else
+        if (CP%ISiTGR_gammaL_noslip) then
+            etadot_MG = 0.d0
+        else if (CP%ISiTGR_BZ_mueta) then
+            term1 = 1.d0 + CP%lambda_2 * CP%lambda_2 * k * k * a**CP%exp_s
+            eta_MG = (1.d0 + CP%beta_2 * CP%lambda_2 * CP%lambda_2 * k * k * a**CP%exp_s) / term1
+            etadot_MG = CP%exp_s * adotoa * (eta_MG - 1.d0)/term1
+        else
+            !adding an extra factor for scale dependence
+            s2_k = (CP%lambda_k*(adotoa/a)/k)**2.d0
+            s1_k = (1.d0+CP%c2*s2_k)/(1.d0+s2_k)
+            s2_k_dot = 2.d0*s2_k*(Hdot-adotoa**2.d0)/adotoa
+            s1_k_dot = s2_k_dot*(CP%c2-1.d0)/(1+s2_k)**2.d0
+            !scale dependent
+            etadot_MG = CP%E22*(OmegaDEdot(State,a,adotoa,Hdot)*s1_k + OmegaDE(State,a,adotoa)*s1_k_dot)
+        end if
+        ISiTGR_eta_dot = etadot_MG
+    end if
+
+    end function ISiTGR_eta_dot
+    
+    !---------------------------------------------------------------------
+    
+    function ISiTGR_Sigma(State,k,a,adotoa)
+    use constants
+    use results
+    use classes
+    class(CAMBdata), intent(in) :: State
+    real(dl), intent(in) :: k, a, adotoa
+    real(dl) ISiTGR_Sigma
+    real(dl) :: Sigma_MG
+    real(dl) :: s1_k, s2_k, omegav
+    
+    omegav = State%Omega_de ! Omega_de is total dark energy density today
+    
+    !binning method expression
+    if(CP%ISiTGR_BIN_muSigma) then
+        if (CP%ISiTGR_BIN_scale_bins) then
+          ISiTGR_Sigma = (1+ISiTGR_Sigma_Z1(k) +(ISiTGR_Sigma_Z2(k)-ISiTGR_Sigma_Z1(k))*tanh((1.d0/a-1.d0-CP%z_div)/CP%z_tw) &
+          +(1-ISiTGR_Sigma_Z2(k))*tanh((1.d0/a-1.d0-CP%z_TGR)/CP%z_tw))/2.d0
+        else
+          !example: if z_TGR=2.0 then splits into 4 redshifts equally spaced (0.5, 1.0, 1.5, 2.0)
+          ISiTGR_Sigma = (1.d0+CP%Sigma1)/2.d0 + (CP%Sigma2-CP%Sigma1)/2.d0*tanh((1.d0/a-1.d0-CP%z_TGR/4.0)/CP%z_tw) &
+          + (CP%Sigma3-CP%Sigma2)/2.d0*tanh((1.d0/a-1.d0-2.d0*CP%z_TGR/4.0)/CP%z_tw) + (CP%Sigma4-CP%Sigma3)/2.d0 * &
+          tanh((1.d0/a-1.d0-3.d0*CP%z_TGR/4.0)/CP%z_tw) + (1.d0-CP%Sigma4)/2.d0*tanh((1.d0/a-1.d0-CP%z_TGR)/CP%z_tw)
+        end if
+    !functional form expression
+    else
+        if (CP%ISiTGR_gammaL_onlygrowth) then
+            Sigma_MG = 1.d0
+        else
+            !adding an extra factor for scale dependence
+            s2_k = (CP%lambda_k*(adotoa/a)/k)**2.d0
+            s1_k = (1.d0+CP%c2*s2_k)/(1.d0+s2_k)
+            !scale dependent
+            Sigma_MG = 1.d0 + CP%Sigma0 * OmegaDE(State,a,adotoa)/omegav * s1_k
+        end if
+        ISiTGR_Sigma = Sigma_MG
+    end if
+    
+    end function ISiTGR_Sigma
+    
+    function ISiTGR_Sigma_dot(State,k,a,adotoa,Hdot)
+    use constants
+    use results
+    use classes
+    class(CAMBdata), intent(in) :: State
+    real(dl), intent(in) :: k, a, adotoa, Hdot
+    real(dl) ISiTGR_Sigma_dot
+    real(dl) :: Sigmadot_MG
+    real(dl) :: s1_k, s2_k, s1_k_dot, s2_k_dot, omegav
+    
+    omegav = State%Omega_de ! Omega_de is total dark energy density today
+
+    !binning method expression
+    if(CP%ISiTGR_BIN_muSigma) then
+        if (CP%ISiTGR_BIN_scale_bins) then
+            ISiTGR_Sigma_dot = adotoa/2.d0/CP%z_tw/a*((ISiTGR_Sigma_Z1(k)-ISiTGR_Sigma_Z2(k))/ &
+            cosh((1.d0/a-1.d0-CP%z_div)/CP%z_tw)**2.d0+(ISiTGR_Sigma_Z2(k)-1)/cosh((1.d0/a-1.d0-CP%z_TGR)/CP%z_tw)**2.d0)
+        else
+            ISiTGR_Sigma_dot = adotoa/2.d0/CP%z_tw/a*( (CP%Sigma1-CP%Sigma2)/cosh((1.d0/a-1.d0-CP%z_TGR/4.0)/CP%z_tw)**2.d0 &
+            + (CP%Sigma2-CP%Sigma3)/cosh((1.d0/a-1.d0-2.d0*CP%z_TGR/4.0)/CP%z_tw)**2.d0 + &
+            + (CP%Sigma3-CP%Sigma4)/cosh((1.d0/a-1.d0-3.d0*CP%z_TGR/4.0)/CP%z_tw)**2.d0 &
+            + (CP%Sigma4-1.d0)/cosh((1.d0/a-1.d0-CP%z_TGR)/CP%z_tw)**2.d0 )
+        end if
+    !functional form expression
+    else
+        if (CP%ISiTGR_gammaL_onlygrowth) then
+            Sigmadot_MG = 0.d0
+        else
+            !adding an extra factor for scale dependence
+            s2_k = (CP%lambda_k*(adotoa/a)/k)**2.d0
+            s1_k = (1.d0+CP%c2*s2_k)/(1.d0+s2_k)
+            s2_k_dot = 2.d0*s2_k*(Hdot-adotoa**2.d0)/adotoa
+            s1_k_dot = s2_k_dot*(CP%c2-1.d0)/(1+s2_k)**2.d0
+            !scale dependent
+            Sigmadot_MG = CP%Sigma0*(OmegaDEdot(State,a,adotoa,Hdot)/omegav*s1_k + OmegaDE(State,a,adotoa)/omegav*s1_k_dot)
+        end if
+        ISiTGR_Sigma_dot= Sigmadot_MG
+    end if
+        
+    end function ISiTGR_Sigma_dot
+    
+    subroutine ISiTGR_k_windows(k, W1, W2, W3, W4)
+      real(dl), intent(in)  :: k
+      real(dl), intent(out) :: W1, W2, W3, W4
+      real(dl) :: t1, t2, t3
+
+      t1 = tanh((k - CP%k_TGR)/CP%k_tw)
+      t2 = tanh((k - CP%k_c  )/CP%k_tw)
+      t3 = tanh((k - CP%k_S  )/CP%k_tw)
+
+      W1 = 0.5d0 * (1.d0 - t1)
+      W2 = 0.5d0 * (t1 - t2)
+      W3 = 0.5d0 * (t2 - t3)
+      W4 = 0.5d0 * (1.d0 + t3)
+    end subroutine ISiTGR_k_windows
+
+    function ISiTGR_mu_Z1(k)
+      real(dl), intent(in) :: k
+      real(dl)             :: ISiTGR_mu_Z1
+      real(dl)             :: W1, W2, W3, W4
+
+      call ISiTGR_k_windows(k, W1, W2, W3, W4)
+
+      ! low-z bin scale structure:
+      ! k < k_TGR       -> W1 ~ 1  -> GR (1.d0)
+      ! k_TGR < k < k_c -> W2 ~ 1  -> mu1
+      ! k_c   < k < k_S -> W3 ~ 1  -> mu2
+      ! k > k_S         -> W4 ~ 1  -> GR (1.d0)
+      ISiTGR_mu_Z1 = 1.d0 * W1 + CP%mu1 * W2 + CP%mu2 * W3 + 1.d0 * W4
+    end function ISiTGR_mu_Z1
+
+    function ISiTGR_mu_Z2(k)
+      real(dl), intent(in) :: k
+      real(dl)             :: ISiTGR_mu_Z2
+      real(dl)             :: W1, W2, W3, W4
+
+      call ISiTGR_k_windows(k, W1, W2, W3, W4)
+
+      ! high-z bin scale structure:
+      ! k < k_TGR       -> GR
+      ! k_TGR < k < k_c -> mu3
+      ! k_c   < k < k_S -> mu4
+      ! k > k_S         -> GR
+      ISiTGR_mu_Z2 = 1.d0 * W1 + CP%mu3 * W2 + CP%mu4 * W3 + 1.d0 * W4
+    end function ISiTGR_mu_Z2
+
+    function ISiTGR_eta_Z1(k)
+      real(dl), intent(in) :: k
+      real(dl)             :: ISiTGR_eta_Z1
+      real(dl)             :: W1, W2, W3, W4
+
+      call ISiTGR_k_windows(k, W1, W2, W3, W4)
+
+      ! low-z bin for eta
+      ISiTGR_eta_Z1 = 1.d0 * W1 + CP%eta1 * W2 + CP%eta2 * W3 + 1.d0 * W4
+    end function ISiTGR_eta_Z1
+
+    function ISiTGR_eta_Z2(k)
+      real(dl), intent(in) :: k
+      real(dl)             :: ISiTGR_eta_Z2
+      real(dl)             :: W1, W2, W3, W4
+
+      call ISiTGR_k_windows(k, W1, W2, W3, W4)
+
+      ! high-z bin for eta
+      ISiTGR_eta_Z2 = 1.d0 * W1 + CP%eta3 * W2 + CP%eta4 * W3 + 1.d0 * W4
+    end function ISiTGR_eta_Z2
+
+    function ISiTGR_Sigma_Z1(k)
+      real(dl), intent(in) :: k
+      real(dl)             :: ISiTGR_Sigma_Z1
+      real(dl)             :: W1, W2, W3, W4
+
+      call ISiTGR_k_windows(k, W1, W2, W3, W4)
+
+      ! low-z bin for Sigma
+      ISiTGR_Sigma_Z1 = 1.d0 * W1 + CP%Sigma1 * W2 + CP%Sigma2 * W3 + 1.d0 * W4
+    end function ISiTGR_Sigma_Z1
+
+    function ISiTGR_Sigma_Z2(k)
+      real(dl), intent(in) :: k
+      real(dl)             :: ISiTGR_Sigma_Z2
+      real(dl)             :: W1, W2, W3, W4
+
+      call ISiTGR_k_windows(k, W1, W2, W3, W4)
+
+      ! high-z bin for Sigma
+      ISiTGR_Sigma_Z2 = 1.d0 * W1 + CP%Sigma3 * W2 + CP%Sigma4 * W3 + 1.d0 * W4
+    end function ISiTGR_Sigma_Z2
+    !################### Dark Energy parameterization of ISiTGR - modeling Omega_Dark_Energy #####################
+    
+    ! CGQ patch for Dark Energy
+    function OmegaDE(State, a, adotoa)
+    use constants
+    use results
+    use classes
+    class(CAMBdata), intent(in) :: State
+    real(dl), intent(in) :: a, adotoa
+    real(dl) :: OmegaDE, omegav, w_0, w_a
+    
+    omegav = State%Omega_de ! Omega_de is total dark energy density today
+    call CP%DarkEnergy%Effective_w_wa(w_0, w_a)
+    OmegaDE = omegav * ((CP%h0*1000.d0/c)/(adotoa/a))**2.d0 * a**(-3.d0*(1.d0+w_0+w_a)) * exp(3.d0*w_a*(a-1.d0))
+    
+    end function OmegaDE
+    
+    !derivative of Omega_Dark_Energy
+    function OmegaDEdot(State,a, adotoa, Hdot)
+    use classes
+    class(CAMBdata), intent(in) :: State
+    real(dl), intent(in) :: a, adotoa, Hdot
+    real(dl) :: OmegaDEdot, w_0, w_a
+    
+    call CP%DarkEnergy%Effective_w_wa(w_0, w_a)
+    
+    OmegaDEdot = -OmegaDE(State,a,adotoa) * ( 2.d0 * (Hdot - adotoa**2.d0)/adotoa + &
+    3.d0 * (1.d0+w_0) * adotoa + 3.d0 * w_a * adotoa * (1.d0-a) )
+    
+    end function OmegaDEdot
+    ! CGQ End of patch for Dark Energy
+
+    ! CGQ patch for Universe Matter Content time-evolution
+    function OmegaMatter(State, a, adotoa)
+        use constants
+        use classes
+        class(CAMBdata), intent(in) :: State
+        real(dl), intent(in) :: a, adotoa
+        real(dl) :: OmegaMatter, OmegaMatterToday
+
+        OmegaMatterToday = (CP%ombh2+CP%omch2+CP%omnuh2) / (CP%H0/100)**2 ! baryons + dark-matter + massive neutrinos (we test late-time modifications, neutrinos are non-relativistic)
+        OmegaMatter = OmegaMatterToday*a**(-3.d0)/(OmegaMatterToday*a**(-3.d0) + CP%omk*a**(-2.d0) + State%Omega_de) !OmegaMatterToday * ((CP%H0*1000.d0/c)/(adotoa/a))**2.d0 * a**(-3.d0) 
+
+    
+    end function OmegaMatter
+    
+    function OmegaCurvature(State, a, adotoa)
+        use constants
+        use classes
+        class(CAMBdata), intent(in) :: State
+        real(dl), intent(in) :: a, adotoa
+        real(dl) :: OmegaCurvature, OmegaCurvatureToday, OmegaMatterToday
+
+        OmegaCurvatureToday = CP%omk 
+        OmegaMatterToday = (CP%ombh2+CP%omch2+CP%omnuh2) / (CP%H0/100)**2 ! baryons + dark-matter + massive neutrinos (we test late-time modifications, neutrinos are non-relativistic)
+        OmegaCurvature = OmegaCurvatureToday*a**(-2.d0)/(OmegaMatterToday*a**(-3.d0) + CP%omk*a**(-2.d0) + State%Omega_de) !* ((CP%H0*1000.d0/c)/(adotoa/a))**2.d0 * a**(-2.d0) 
+    
+    end function OmegaCurvature
+    ! CGQ End of patch for Universe Matter Content time-evolution
+    !################### Modified Gravity Functions of ISiTGR Parameters #####################
+    !< ISiTGR MOD END
+
+
     subroutine derivs(EV,n,tau,ay,ayprime)
     !  Evaluate the time derivatives of the scalar perturbations
     use constants, only : barssc0, Compton_CT, line21_const
@@ -2177,9 +2757,22 @@
     real(dl) ddopacity, visibility, dvisibility, ddvisibility, exptau, lenswindow
     real(dl) ISW, quadrupole_source, doppler, monopole_source, tau0, ang_dist
     real(dl) dgrho_de, dgq_de, cs2_de
+	!> ISiTGR MOD START: adding new variables
+    real(dl) etakdot, Hdot, TGR_rhoDeltadot, TGR_f_1
+	real(dl) phipluspsi
+	real(dl) TGR_mu, TGR_mudot, TGR_eta, TGR_etadot, TGR_Sigma, TGR_Sigmadot !for MG functions
+	real(dl) TGR_f_mueta, TGR_f_muSigma, TGR_rhoDelta, dgpi_3wplus1, dgpi_3wplus2, dgpi_3wplus1plusbetak !for terms to compute etakdot
+	real(dl) TGR_Phi, TGR_Phidot, TGR_Psi, TGR_Psidot !MG source functions in Newtonian gauge
+	real(dl) betak, gpresv_t !CGQ for spatial curvature and Dark Energy parametrizations
+    logical :: use_mg
+    !< ISiTGR MOD END
 
     k=EV%k_buf
     k2=EV%k2_buf
+
+	!> ISiTGR MOD START: computing coefficient beta_k for spatial curvature
+    betak = 1.d0/EV%Kf(1) !betak=1 for flat universe
+	!< ISiTGR MOD END
 
     !  Get background scale factor, sound speed and ionisation fraction.
     if (EV%TightCoupling) then
@@ -2187,6 +2780,11 @@
     else
         call EV%ThermoData%Values(tau,a,cs2,opacity)
     end if
+
+    !> ISiTGR MOD START: set MG to be valid only at roughly z<49
+    use_mg = (CP%GR == 0) .and. (a >= 0.02d0)
+    !< ISiTGR MOD END
+
     a2=a*a
 
     etak=ay(ix_etak)
@@ -2238,14 +2836,22 @@
 
     dgrho = dgrho_matter
 
+	!> ISiTGR MOD START
     if (EV%no_nu_multpoles) then
-        !RSA approximation of arXiv:1104.2933, dropping opactity terms in the velocity
-        !Approximate total density variables with just matter terms
-        z=(0.5_dl*dgrho/k + etak)/adotoa
-        dz= -adotoa*z - 0.5_dl*dgrho/k
-        clxr=-4*dz/k
-        qr=-4._dl/3*z
-        pir=0
+		if (.not. use_mg) then !CGQ to work with default GR or with MG models
+	        !RSA approximation of arXiv:1104.2933, dropping opactity terms in the velocity
+    	    !Approximate total density variables with just matter terms
+        	z=(0.5_dl*dgrho/k + etak)/adotoa
+	        dz= -adotoa*z - 0.5_dl*dgrho/k
+    	    clxr=-4*dz/k
+        	qr=-4._dl/3*z
+        	pir=0
+		else
+	    	clxr=2*(grhoc_t*clxc+grhob_t*clxb)/3/k**2
+        	qr= clxr*k/sqrt((grhoc_t+grhob_t)/3)*(2/3._dl)
+        	pir=0
+		end if
+	!< ISiTGR MOD END
     else
         !  Massless neutrinos
         clxr=ay(EV%r_ix)
@@ -2255,15 +2861,23 @@
 
     pig=0
     if (EV%no_phot_multpoles) then
-        if (.not. EV%no_nu_multpoles) then
-            z=(0.5_dl*dgrho/k + etak)/adotoa
-            dz= -adotoa*z - 0.5_dl*dgrho/k
-            clxg=-4*dz/k-4/k*opacity*(vb+z)
-            qg=-4._dl/3*z
-        else
-            clxg=clxr-4/k*opacity*(vb+z)
-            qg=qr
-        end if
+		!> ISiTGR MOD START
+		if (.not. use_mg) then !CGQ to work with default GR or with MG models
+            if (.not. EV%no_nu_multpoles) then
+                z=(0.5_dl*dgrho/k + etak)/adotoa
+                dz= -adotoa*z - 0.5_dl*dgrho/k
+                clxg=-4*dz/k-4/k*opacity*(vb+z)
+                qg=-4._dl/3*z
+            else
+                clxg=clxr-4/k*opacity*(vb+z)
+                qg=qr
+            end if
+		else
+			clxg=2*(grhoc_t*clxc+grhob_t*clxb)/3/k**2
+    	    qg= clxg*k/sqrt((grhoc_t+grhob_t)/3)*(2/3._dl)
+        	pig=0
+		end if
+		!< ISiTGR MOD END
     else
         !  Photons
         clxg=ay(EV%g_ix)
@@ -2289,17 +2903,255 @@
         dgq = dgq + dgq_de
     end if
 
-    !  Get sigma (shear) and z from the constraints
-    ! have to get z from eta for numerical stability
-    z=(0.5_dl*dgrho/k + etak)/adotoa
-    if (State%flat) then
-        !eta*k equation
-        sigma=(z+1.5_dl*dgq/k2)
-        ayprime(ix_etak)=0.5_dl*dgq
+	!>ISiTGR MOD START-----------------------------------------------------------------
+    !all this module was written by CGQ, adding mueta and muSigma parameterizations.
+    !Also, CGQ modified Q,D parameterization originally written by JD in order to work with massive neutrinos.
+
+    if (use_mg) then
+
+        ! 1) Get sigma
+        !CGQ for Dark Energy pressure ----------------------
+        gpresv_t = w_dark_energy_t*grhov_t
+        !---------------------------------------------------
+        gpres = gpres_noDE + gpresv_t
+        TGR_rhoDelta = dgrho+3.d0*adotoa*dgq/k !CGQ
+        Hdot = -(grho+3.d0*gpres)/6.d0   !JD
+        dgpi = 0.d0
+        dgpi_3wplus1 = 0.d0
+        dgpi_3wplus2 = 0.d0
+        dgpi_3wplus1plusbetak = 0.d0
+            if (CP%ISiTGR_mueta .or. CP%ISiTGR_BIN_mueta) then
+    
+                !mu-eta parameterization
+                TGR_mu = ISiTGR_mu(State,k,a,adotoa)
+                TGR_mudot = ISiTGR_mu_dot(State,k,a,adotoa,Hdot)
+                TGR_eta = ISiTGR_eta(State,k,a,adotoa)
+                TGR_etadot = ISiTGR_eta_dot(State,k,a,adotoa,Hdot)
+    
+                !here we get the contributions for massive neutrinos to dgpi and dgpi_3wplus2
+                if (CP%Num_Nu_Massive /= 0) then
+                    call MassiveNuVarsOut(EV, ay, ayprime, a, adotoa, dgpi=dgpi, dgpi_3wplus1=dgpi_3wplus1, dgpi_3wplus2=dgpi_3wplus2, &
+                    dgpi_3wplus1plusbetak=dgpi_3wplus1plusbetak)
+                end if
+    
+                !adding contributions from photons and massless neutrinos
+                dgpi = dgpi + grhor_t*pir + grhog_t*pig
+                dgpi_3wplus1 = dgpi_3wplus1 + 2.d0*(grhor_t*pir+grhog_t*pig) !!Note that (3w_rad+1)=(1+1)=2
+                dgpi_3wplus2 = dgpi_3wplus2 + 3.d0*(grhor_t*pir+grhog_t*pig) !!Note that (3w_rad+2)=(1+2)=3
+                dgpi_3wplus1plusbetak = dgpi_3wplus1plusbetak + (2.d0+betak)*(grhor_t*pir+grhog_t*pig) !!Note that (3w_rad+1+betak)=2+betak
+    
+                !!getting the newtonian potentials for MG
+                TGR_Psi = -0.5d0*TGR_mu*(betak*TGR_rhoDelta+2.d0*dgpi)/k2
+                TGR_Phi = (TGR_mu/k2)*dgpi+TGR_eta*TGR_Psi
+    
+                !Computing sigma_camb, just called sigma here
+                sigma = etak/adotoa - k*TGR_Phi/adotoa
+    
+            else if (CP%ISiTGR_muSigma .or. CP%ISiTGR_BIN_muSigma) then
+                !mu-Sigma parameterization
+                    TGR_mu = ISiTGR_mu(State,k,a,adotoa)
+                TGR_mudot = ISiTGR_mu_dot(State,k,a,adotoa,Hdot)
+                TGR_Sigma = ISiTGR_Sigma(State,k,a,adotoa)
+                TGR_Sigmadot = ISiTGR_Sigma_dot(State,k,a,adotoa,Hdot)
+    
+                !here we get the contributions for massive neutrinos to dgpi and dgpi_w
+                if (CP%Num_Nu_Massive /= 0) then
+                    call MassiveNuVarsOut(EV, ay, ayprime, a, adotoa, dgpi=dgpi, dgpi_3wplus1=dgpi_3wplus1)
+                end if
+    
+                !adding contributions from photons and massless neutrinos
+                dgpi = dgpi + grhor_t*pir + grhog_t*pig
+                dgpi_3wplus1 = dgpi_3wplus1 + 2.d0*(grhor_t*pir+grhog_t*pig) !!Note that (3w_rad+1)=(1+1)=2
+    
+                !!getting the newtonian potentials for MG
+                TGR_Psi = -0.5d0*TGR_mu*(betak*TGR_rhoDelta+2.d0*dgpi)/k2
+                TGR_Phi = -TGR_Sigma*(betak*TGR_rhoDelta+dgpi)/k2-TGR_Psi
+    
+                !Computing sigma_camb
+                sigma = etak/adotoa - k*TGR_Phi/adotoa
+    
+            else
+                call GlobalError('Select a valid MG parameterization, (mu,eta) or (mu,Sigma)')
+            end if
+            
+        ! 2) Get sigmadot and Weyl potential
+            ! a) sigmadot calculation
+            if (CP%ISiTGR_mueta .or. CP%ISiTGR_muSigma .or. CP%ISiTGR_BIN_mueta .or. CP%ISiTGR_BIN_muSigma) then
+    
+                !Computing derivative of sigma_camb, just called sigmadot. Here, we use alpha=(sigma_camb/k)
+                sigmadot = k*TGR_Psi - adotoa*sigma
+            else
+                call GlobalError('Select a valid MG parameterization, (mu,eta) or (mu,Sigma)')
+            end if
+            
+            ! b) Weyl potential calculation
+            phi = (TGR_Psi+TGR_Phi)/2._dl
+    
+        ! 3) get contributions of massless neutrinos, photons, and massive neutrinos to pidot_sum
+        !Computing pidot_sum by calling early some parts of the derivs subroutine, to get pidot in terms of sigma
+            pidot_sum = 0.d0
+        !contribution by massless neutrinos --------------------------------------------------------
+            if (EV%no_nu_multpoles) then
+                pirdot = 0.d0
+            else
+                ix=EV%r_ix+2
+                if (EV%lmaxnr>2) then
+                    pirdot=EV%denlk(2)*qr- EV%denlk2(2)*ay(ix+1)+8._dl/15._dl*k*sigma
+                else
+                    pirdot=EV%denlk(2)*qr +8._dl/15._dl*k*sigma
+                end if
+            end if
+            !here we add contribution by massless neutrinos
+            pidot_sum = pidot_sum + grhor_t*pirdot
+    
+        !contribution by photons -------------------------------------------------------------------
+            if (EV%no_phot_multpoles) then
+                pigdot=0.d0
+            else
+                if (EV%tightcoupling) then !CGQ: not used at late-times
+                    pigdot=0.d0
+                else
+                    E2=ay(EV%polind+2)
+                    polter = pig/10+9._dl/15*E2 !2/15*(3/4 pig + 9/2 E2)
+                    ix= EV%g_ix+2
+                    if (EV%lmaxg>2) then
+                        pigdot=EV%denlk(2)*qg-EV%denlk2(2)*ay(ix+1)-opacity*(pig - polter) &
+                                +8._dl/15._dl*k*sigma
+                    else !closed case
+                        pigdot=EV%denlk(2)*qg-opacity*(pig - polter) +8._dl/15._dl*k*sigma
+                    end if
+                end if
+            end if
+            !here we add contribution by photons
+            pidot_sum = pidot_sum + grhog_t*pigdot
+
+        !contribution by massive neutrinos --------------------------------------------------------
+
+        !  Massive neutrino equations of motion.
+        if (State%CP%Num_Nu_massive >0) then
+            !DIR$ LOOP COUNT MIN(1), AVG(1)
+            do nu_i = 1, State%CP%Nu_mass_eigenstates
+                if (EV%MassiveNuApprox(nu_i)) then
+                    !Now EV%iq0 = clx, EV%iq0+1 = clxp, EV%iq0+2 = G_1, EV%iq0+3=G_2=pinu
+                    !see astro-ph/0203507
+                    G11_t=EV%G11(nu_i)/a/a2
+                    G30_t=EV%G30(nu_i)/a/a2
+                    off_ix = EV%nu_ix(nu_i)
+                    w=wnu_arr(nu_i)
+                    !terms below commented out, since z not computeted yet (following ArXiv: 1901.05956)
+                    !ayprime(off_ix)=-k*z*(w+1) + 3*adotoa*(w*ay(off_ix) - ay(off_ix+1))-k*ay(off_ix+2)
+                    !ayprime(off_ix+1)=(3*w-2)*adotoa*ay(off_ix+1) - 5._dl/3*k*z*w - k/3*G11_t
+                    ayprime(off_ix+2)=(3*w-1)*adotoa*ay(off_ix+2) - k*(2._dl/3*EV%Kf(1)*ay(off_ix+3)-ay(off_ix+1))
+                    ayprime(off_ix+3)=(3*w-2)*adotoa*ay(off_ix+3) + 2*w*k*sigma - k/5*(3*EV%Kf(2)*G30_t-2*G11_t)
+                else
+                    ind=EV%nu_ix(nu_i)
+                    !DIR$ LOOP COUNT MIN(3), AVG(3)
+                    do i=1,EV%nq(nu_i)
+                        q=State%NuPerturbations%nu_q(i)
+                        aq=a*State%nu_masses(nu_i)/q
+                        v=1._dl/sqrt(1._dl+aq*aq)
+
+                        !terms below commented out, since z not computeted yet (following ArXiv: 1901.05956)
+                        !ayprime(ind)=-k*(4._dl/3._dl*z + v*ay(ind+1))
+                        ind=ind+1
+                        ayprime(ind)=v*(EV%denlk(1)*ay(ind-1)-EV%denlk2(1)*ay(ind+1))
+                        ind=ind+1
+                        if (EV%lmaxnu_tau(nu_i)==2) then
+                            ayprime(ind)=-ayprime(ind-2) -3*cothxor*ay(ind)
+                        else
+                            ayprime(ind)=v*(EV%denlk(2)*ay(ind-1)-EV%denlk2(2)*ay(ind+1)) &
+                                +k*8._dl/15._dl*sigma
+                            do l=3,EV%lmaxnu_tau(nu_i)-1
+                                ind=ind+1
+                                ayprime(ind)=v*(EV%denlk(l)*ay(ind-1)-EV%denlk2(l)*ay(ind+1))
+                            end do
+                            !  Truncate moment expansion.
+                            ind = ind+1
+                            ayprime(ind)=k*v*ay(ind-1)-(EV%lmaxnu_tau(nu_i)+1)*cothxor*ay(ind)
+                        end if
+                        ind = ind+1
+                    end do
+                end if
+            end do
+
+            if (EV%has_nu_relativistic) then
+                ind=EV%nu_pert_ix
+                ayprime(ind)=+k*a2*qr -k*ay(ind+1)
+                ind2= EV%r_ix
+                do l=1,EV%lmaxnu_pert-1
+                    ind=ind+1
+                    ind2=ind2+1
+                    ayprime(ind)= -a2*(EV%denlk(l)*ay(ind2-1)-EV%denlk2(l)*ay(ind2+1)) &
+                        +   (EV%denlk(l)*ay(ind-1)-EV%denlk2(l)*ay(ind+1))
+                end do
+                ind=ind+1
+                ind2=ind2+1
+                ayprime(ind)= k*(ay(ind-1) -a2*ay(ind2-1)) -(EV%lmaxnu_pert+1)*cothxor*ay(ind)
+            end if
+
+			!here we add contribution by massive neutrinos to pidot_sum
+            call MassiveNuVarsOut(EV, ay, ayprime, a, adotoa, pidot_sum=pidot_sum) !other terms not included, so not modified, only pidot_sum
+        end if
+
+        ! 4) compute etakdot and z
+            if (CP%ISiTGR_mueta .or. CP%ISiTGR_BIN_mueta) then
+                !Computing etakdot
+                !w_masslessnu=1/3, w_massivenu=0
+                TGR_f_mueta = k2 + 1.5d0*betak*TGR_mu*TGR_eta*((grhoc_t+grhob_t)+(grhor_t+grhog_t)*4.d0/3.d0+(grhonu_t+gpres_nu))!& + (grhov_t+gpresv_t))
+    
+                TGR_f_1 =  1.d0+3.d0*(adotoa**2.d0-Hdot)/k2
+    
+                etakdot = k/(2.d0*TGR_f_mueta)*(k*TGR_mu*TGR_eta*betak*TGR_f_1*dgq + betak*TGR_rhoDelta*(adotoa*TGR_mu*(TGR_eta-1.d0) - &
+                    TGR_mudot*TGR_eta-TGR_mu*TGR_etadot) + 2.d0*TGR_mu*(1.d0-TGR_eta)*pidot_sum + k*sigma*(-2.d0*(adotoa**2.d0-Hdot) &
+                    +TGR_mu*TGR_eta*betak*((grhoc_t+grhob_t)+(grhor_t+grhog_t)*4.d0/3.d0+(grhonu_t+gpres_nu))) - 2.d0*dgpi &
+                    *(TGR_mu*TGR_etadot+TGR_mudot*(TGR_eta-1.d0)) - 2.d0*adotoa*TGR_mu*dgpi_3wplus2 + 2.d0 * adotoa * TGR_mu * TGR_eta * &
+                    dgpi_3wplus1plusbetak)
+    
+                ayprime(ix_etak) = etakdot
+    
+                !Computing z_camb
+                z = sigma - 3.d0*etakdot/k2
+    
+                TGR_Phidot = (etakdot - adotoa*sigmadot - Hdot*sigma)/k
+    
+            else if (CP%ISiTGR_muSigma .or. CP%ISiTGR_BIN_muSigma) then
+                !Computing etakdot
+                TGR_f_muSigma = k2 + 1.5d0*betak*(2.d0*TGR_Sigma-TGR_mu)*((grhoc_t+grhob_t)+(grhor_t+grhog_t)*4.d0/3.d0+(grhonu_t+gpres_nu))
+    
+                TGR_f_1 =  1.d0+3.d0*(adotoa**2.d0-Hdot)/k2
+    
+                etakdot = k/(2.d0*TGR_f_muSigma)*(k*betak*(2.d0*TGR_Sigma-TGR_mu)*TGR_f_1*dgq + 2.d0*(TGR_mu-TGR_Sigma)*pidot_sum &
+                        + TGR_rhoDelta*betak*((TGR_mudot-2.d0*TGR_Sigmadot)+2.d0*adotoa*(TGR_Sigma-TGR_mu)) + 2.d0*dgpi*(TGR_mudot &
+                        -TGR_Sigmadot + adotoa*betak*(2.d0*TGR_Sigma-TGR_mu) - adotoa*TGR_mu) + k*sigma*(-2.d0*(adotoa**2.d0-Hdot) + betak* &
+                        (2.d0*TGR_Sigma-TGR_mu)*((grhoc_t+grhob_t)+(grhor_t+grhog_t)*4.d0/3.d0+(grhonu_t+gpres_nu))) &
+                        + 2.d0*adotoa*(TGR_Sigma-TGR_mu)*dgpi_3wplus1)
+    
+                ayprime(ix_etak) = etakdot
+                !Computing z
+                z = sigma - 3.d0*etakdot/k2
+    
+                TGR_Phidot = (etakdot - adotoa*sigmadot - Hdot*sigma)/k
+    
+            else
+                call GlobalError('Select a valid MG parameterization, (mu,eta) or (mu,Sigma)')
+            end if    
+
     else
-        sigma=(z+1.5_dl*dgq/k2)/EV%Kf(1)
-        ayprime(ix_etak)=0.5_dl*dgq + State%curv*z
+
+        !  Get sigma (shear) and z from the constraints
+        ! have to get z from eta for numerical stability
+        z=(0.5_dl*dgrho/k + etak)/adotoa
+        if (State%flat) then
+            !eta*k equation
+            sigma=(z+1.5_dl*dgq/k2)
+            ayprime(ix_etak)=0.5_dl*dgq
+        else
+            sigma=(z+1.5_dl*dgq/k2)/EV%Kf(1)
+            ayprime(ix_etak)=0.5_dl*dgq + State%curv*z
+        end if
+
     end if
+	!< ISiTGR MOD END -----------------------------------------------------------------------
 
     if (.not. EV%is_cosmological_constant) &
         call State%CP%DarkEnergy%PerturbationEvolve(ayprime, w_dark_energy_t, &
@@ -2363,11 +3215,17 @@
             ! by Francis-Yan Cyr-Racine simplified (inconsistently) by AL assuming flat
             !AL: First order slip seems to be fine here to 2e-4
 
-            !  8*pi*G*a*a*SUM[rho_i*sigma_i]
-            dgs = grhog_t*pig+grhor_t*pir
+			!>ISiTGR MOD START
+			if (.not. use_mg) then
+	            !  8*pi*G*a*a*SUM[rho_i*sigma_i]
+    	        dgs = grhog_t*pig+grhor_t*pir
 
-            ! Define shear derivative to first order
-            sigmadot = -2*adotoa*sigma-dgs/k+etak
+        	    ! Define shear derivative to first order
+            	sigmadot = -2*adotoa*sigma-dgs/k+etak
+			else
+				sigmadot = k*TGR_Psi - adotoa*sigma
+			end if
+			!<ISiTGR MOD END
 
             !Once know slip, recompute qgdot, pig, pigdot
             qgdot = k*(clxg/4._dl-pig/2._dl) +opacity*slip
@@ -2690,7 +3548,13 @@
             State%CP%DarkEnergy%diff_rhopi_Add_Term(dgrho_de, dgq_de, grho, &
             gpres, w_dark_energy_t, State%grhok, adotoa, &
             EV%kf(1), k, grhov_t, z, k2, ayprime, ay, EV%w_ix)
-        phi = -((dgrho +3*dgq*adotoa/k)/EV%Kf(1) + dgpi)/(2*k2)
+		!> ISiTGR MOD START
+        !CGQ ---------------------------
+        if (.not. use_mg) then
+            phi = -((dgrho +3*dgq*adotoa/k)/EV%Kf(1) + dgpi)/(2*k2)
+        end if
+        !CGQ ---------------------------
+        !< ISiTGR MOD END
 
         if (associated(EV%OutputTransfer)) then
             EV%OutputTransfer(Transfer_kh) = k/(State%CP%h0/100._dl)
@@ -2703,7 +3567,7 @@
             EV%OutputTransfer(Transfer_nonu) = (grhob_t*clxb+grhoc_t*clxc)/(grhob_t + grhoc_t)
             EV%OutputTransfer(Transfer_tot_de) =  dgrho/grho_matter
             !Transfer_Weyl is k^2Phi, where Phi is the Weyl potential
-            EV%OutputTransfer(Transfer_Weyl) = k2*phi
+            EV%OutputTransfer(Transfer_Weyl) = k2*phi !CGQ: already with MG effects
             EV%OutputTransfer(Transfer_Newt_vel_cdm)=  -k*sigma/adotoa
             EV%OutputTransfer(Transfer_Newt_vel_baryon) = -k*(vb + sigma)/adotoa
             EV%OutputTransfer(Transfer_vel_baryon_cdm) = vb
@@ -2736,29 +3600,62 @@
                 visibility, dvisibility, ddvisibility, exptau, lenswindow)
 
             tau0 = State%tau0
-            phidot = (1.0d0/2.0d0)*(adotoa*(-dgpi - 2*k2*phi) + dgq*k - &
+
+			!>ISiTGR MOD START: CGQ to work with GR and MG ------------------------------------------
+        	if (.not. use_mg) then
+                phidot = (1.0d0/2.0d0)*(adotoa*(-dgpi - 2*k2*phi) + dgq*k - &
                 diff_rhopi+ k*sigma*(gpres + grho))/k2
-            !time derivative of shear
-            sigmadot = -adotoa*sigma - 1.0d0/2.0d0*dgpi/k + k*phi
-            !quadrupole source derivatives; polter = pi_g/10 + 3/5 E_2
-            polter = pig/10+9._dl/15*E(2)
-            polterdot = (1.0d0/10.0d0)*pigdot + (3.0d0/5.0d0)*Edot(2)
-            polterddot = -2.0d0/25.0d0*adotoa*dgq/(k*EV%Kf(1)) - 4.0d0/75.0d0*adotoa* &
-                k*sigma - 4.0d0/75.0d0*dgpi - 2.0d0/75.0d0*dgrho/EV%Kf(1) - 3.0d0/ &
-                50.0d0*k*octgdot*EV%Kf(2) + (1.0d0/25.0d0)*k*qgdot - 1.0d0/5.0d0 &
-                *k*EV%Kf(2)*Edot(3) + (-1.0d0/10.0d0*pig + (7.0d0/10.0d0)* &
-                polter - 3.0d0/5.0d0*E(2))*dopacity + (-1.0d0/10.0d0*pigdot &
-                + (7.0d0/10.0d0)*polterdot - 3.0d0/5.0d0*Edot(2))*opacity
-            !Temperature source terms, after integrating by parts in conformal time
+                !time derivative of shear
+                sigmadot = -adotoa*sigma - 1.0d0/2.0d0*dgpi/k + k*phi
+                !quadrupole source derivatives; polter = pi_g/10 + 3/5 E_2
+                polter = pig/10+9._dl/15*E(2)
+                polterdot = (1.0d0/10.0d0)*pigdot + (3.0d0/5.0d0)*Edot(2)
+                polterddot = -2.0d0/25.0d0*adotoa*dgq/(k*EV%Kf(1)) - 4.0d0/75.0d0*adotoa* &
+                    k*sigma - 4.0d0/75.0d0*dgpi - 2.0d0/75.0d0*dgrho/EV%Kf(1) - 3.0d0/ &
+                    50.0d0*k*octgdot*EV%Kf(2) + (1.0d0/25.0d0)*k*qgdot - 1.0d0/5.0d0 &
+                    *k*EV%Kf(2)*Edot(3) + (-1.0d0/10.0d0*pig + (7.0d0/10.0d0)* &
+                    polter - 3.0d0/5.0d0*E(2))*dopacity + (-1.0d0/10.0d0*pigdot &
+                    + (7.0d0/10.0d0)*polterdot - 3.0d0/5.0d0*Edot(2))*opacity
+                !Temperature source terms, after integrating by parts in conformal time
 
-            !2phi' term (\phi' + \psi' in Newtonian gauge), phi is the Weyl potential
-            ISW = 2*phidot*exptau
-            monopole_source =  (-etak/(k*EV%Kf(1)) + 2*phi + clxg/4)*visibility
-            doppler = ((sigma + vb)*dvisibility + (sigmadot + vbdot)*visibility)/k
-            quadrupole_source = (5.0d0/8.0d0)*(3*polter*ddvisibility + 6*polterdot*dvisibility &
-                + (k**2*polter + 3*polterddot)*visibility)/k**2
+                !2phi' term (\phi' + \psi' in Newtonian gauge), phi is the Weyl potential
+                ISW = 2*phidot*exptau
+                monopole_source =  (-etak/(k*EV%Kf(1)) + 2*phi + clxg/4)*visibility
+                doppler = ((sigma + vb)*dvisibility + (sigmadot + vbdot)*visibility)/k
+                quadrupole_source = (5.0d0/8.0d0)*(3*polter*ddvisibility + 6*polterdot*dvisibility &
+                    + (k**2*polter + 3*polterddot)*visibility)/k**2
 
-            EV%OutputSources(1) = ISW + doppler + monopole_source + quadrupole_source
+                EV%OutputSources(1) = ISW + doppler + monopole_source + quadrupole_source
+			else
+    	        polter = pig/10+9._dl/15*E(2)
+
+		        if (CP%ISiTGR_mueta .or. CP%ISiTGR_muSigma .or. CP%ISiTGR_BIN_mueta .or. CP%ISiTGR_BIN_muSigma) then !CGQ for ISW effect for mueta, muSigma parameterizations
+    		        !Computing Psidot for ISW
+                    TGR_Psidot = -TGR_mudot/(2.d0*k2)*(betak*TGR_rhoDelta+2.d0*dgpi) &
+                        + TGR_mu/(2.d0*k2)*(adotoa*betak*TGR_rhoDelta - 2.d0*pidot_sum + &
+                        k*betak*TGR_f_1*dgq + 2.d0*adotoa*dgpi_3wplus1 + 2.d0*betak*adotoa*dgpi &
+                        + (TGR_f_1*sigma*k-3.d0*(TGR_Phidot+adotoa*TGR_Psi))* &
+                        betak*(grhoc_t+grhob_t+(grhor_t+grhog_t)*4.d0/3.d0+grhonu_t+gpres_nu))
+		        else
+                    call GlobalError('Select a valid MG parameterization, (mu,eta) or (mu,Sigma)')
+				end if
+
+    	        !Phidot plus Psidot
+			    phidot = (TGR_Psidot+TGR_Phidot)/2._dl
+			    ISW = (2._dl*phidot)*exptau
+
+ 		        EV%OutputSources(1) = ISW + visibility*pig/16.d0+(3.D0/8.D0*E(2)+clxg/4.d0)*visibility+(11.D0/10.D0*dvisibility &
+			    					*sigma+(-3.D0/8.D0*EV%Kf(2)*E(3)-9.D0/80.D0*EV%Kf(2)*octg+3.D0/40.D0*qg+vb) &
+ 			      					*dvisibility+(3.D0/40.D0*qgdot+21.D0/10.D0*sigmadot+vbdot-9.D0/80.D0*EV%Kf(2) &
+			    					*octgdot-3.D0/8.D0*EV%Kf(2)*Edot(3))*visibility)/k+((3.D0/16.D0*ddvisibility &
+ 			    					-9.D0/160.D0*visibility*dopacity-9.D0/160.D0*dvisibility*opacity)*pig+(9.D0/8.D0 &
+    	    						*Edot(2)+3.D0/16.D0*pigdot-27.D0/80.D0*opacity*E(2))*dvisibility &
+	        						+((-9.D0/160.D0*pigdot-27.D0/80.D0*Edot(2))*opacity-27.D0/80.D0 &
+    	    						*dopacity*E(2))*visibility+9.D0/8.D0*ddvisibility*E(2))/k**2
+            end if
+            !<ISiTGR MOD END -------------------------------------------------------------------
+
+
             ang_dist = f_K(tau0-tau)
             if (tau < tau0) then
                 !E polarization source
@@ -2769,8 +3666,14 @@
             if (size(EV%OutputSources) > 2) then
                 !Get lensing sources
                 if (tau>State%tau_maxvis .and. tau0-tau > 0.1_dl) then
-                    EV%OutputSources(3) = -2*phi*f_K(tau-State%tau_maxvis)/(f_K(tau0-State%tau_maxvis)*ang_dist)
-                    !We include the lensing factor of two here
+					!> ISiTGR MOD START
+					if (.not. use_mg) then !CGQ
+                    	EV%OutputSources(3) = -2*phi*f_K(tau-State%tau_maxvis)/(f_K(tau0-State%tau_maxvis)*ang_dist)
+                    	!We include the lensing factor of two here
+					else
+						EV%OutputSources(3) = -(TGR_Phi+TGR_Psi)*f_K(tau-State%tau_maxvis)/(f_K(tau0-State%tau_maxvis)*f_K(tau0-tau)) !CGQ
+					end if
+					!< ISiTGR MOD END
                 end if
             end if
             if (State%num_redshiftwindows > 0) then

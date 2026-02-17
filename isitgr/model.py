@@ -387,6 +387,55 @@ class CAMBparams(F2003Class):
         ("min_l_logl_sampling", c_int, "Minimum L to use log sampling for L"),
         ("SourceWindows", AllocatableObjectArray(SourceWindow)),
         ("CustomSources", CustomSources),
+        #> ISiTGR MOD START: Adding MG parameters.
+        ("E11", c_double, "MG parameter for (mu,eta) parametrization"),
+        ("E22", c_double, "MG parameter for (mu,eta) parametrization"),
+        ("c1", c_double, "MG parameter for scale-dependence"),
+        ("c2", c_double, "MG parameter for scale-dependence"),
+        ("Lambda", c_double, "MG parameter for scale-dependence"),
+        ("mu0", c_double, "MG parameter for (mu,Sigma) parametrization"),
+        ("Sigma0", c_double, "MG parameter for (mu,Sigma) parametrization"),
+        ("mu1", c_double, "Bin parameter for (mu,eta) or (mu,Sigma) parameterization"),
+        ("mu2", c_double, "Bin parameter for (mu,eta) or (mu,Sigma) parameterization"),
+        ("mu3", c_double, "Bin parameter for (mu,eta) or (mu,Sigma) parameterization"),
+        ("mu4", c_double, "Bin parameter for (mu,eta) or (mu,Sigma) parameterization"),
+        ("eta1", c_double, "Bin parameter for (mu,eta) parameterization"),
+        ("eta2", c_double, "Bin parameter for (mu,eta) parameterization"),
+        ("eta3", c_double, "Bin parameter for (mu,eta) parameterization"),
+        ("eta4", c_double, "Bin parameter for (mu,eta) parameterization"),
+        ("Sigma1", c_double, "Bin parameter for (mu,Sigma) parameterization"),
+        ("Sigma2", c_double, "Bin parameter for (mu,Sigma) parameterization"),
+        ("Sigma3", c_double, "Bin parameter for (mu,Sigma) parameterization"),
+        ("Sigma4", c_double, "Bin parameter for (mu,Sigma) parameterization"),
+        ("z_div", c_double, "redshift at which the transition between the two bins occurs"),
+        ("z_TGR", c_double, "redshift below which GR is to be tested"),
+        ("z_tw", c_double, "transition width for the hyperbolic tangent function."),
+        ("k_c", c_double, "parameter that separates scale-bins"),
+        ("k_tw", c_double, "transition width between k bins"),
+        ("k_TGR", c_double, "scale below which we recover GR at very large scales"),
+        ("k_S", c_double, "scale above which we force bins to go back to GR (notice scale cuts are supposed to be already applied in the data)"),
+        ("beta_1", c_double, "BZ parameter to modulate assymptotic scale-independent behavior in mu"),
+        ("lambda_1", c_double, "BZ paramerer to module scale dependence in mu"),
+        ("exp_s", c_double, "BZ parameter to modulate time dependence, entering as a power of a"),
+        ("beta_2", c_double, "BZ parameter to modulate assymptotic scale-independent behavior in eta"),
+        ("lambda_2", c_double, "BZ paramerer to module scale dependence in eta"),
+        ("gamma_0", c_double, "value of growth index at z=0 (if no redshift evolution, value of constant growth index)"),
+        ("gamma_a", c_double, "strenght of the redshift evolution of the growth index (assuming redshift evolution)"),
+        ("t_k", c_double, "scale damping strenght (for growth index implementation)"),
+        ("d_s", c_double, "scale damping smoothing exponent (for growth index implementation)"),
+        ("ISiTGR_mueta", c_bool, "flag to use (mu,eta) parametrization for functional form"),
+        ("ISiTGR_muSigma", c_bool, "flag to use (mu,Sigma) parametrization for functional form"),
+        ("ISiTGR_BIN_mueta", c_bool, "flag to use (mu,eta) parametrization for binning method"),
+        ("ISiTGR_BIN_muSigma", c_bool, "flag to use (mu,Sigma) parametrization for binning method"),
+        ("ISiTGR_BIN_scale_bins", c_bool, "flag to bin only in redshift. If false, then binning is built in both redshift and scale"),
+        ("ISiTGR_BZ_mueta", c_bool, "flag to use Bertschinger & Zukin models through (mu, eta)"),
+        ("ISiTGR_gammaL_noslip", c_bool, "flag to use growth index, while assuming a no-slip model (mu, eta=1)"),
+        ("ISiTGR_gammaL_onlygrowth", c_bool, "flag to use growth index, while assuming an only-growth model (mu, Sigma=1)"),
+        ("ISiTGR_gammaL_yukawa_damping", c_bool, "flag to use growth index, with a yukawa damping (if false, use binning-like damping)"),
+        ("ISiTGR_growth_index_Taylor", c_bool, "flag to assume a redshift evolution for the growth index (based on a Taylor series in a around a=1)."),
+        ("ISiTGR_growth_index_Wen", c_bool, "flag to assume a redshift evolution for the growth index (based on Arxiv:2304.07281 parameterization by Y. Wen et al.)."),
+        ("GR", c_int, "GR switch on/off")
+        #< ISiTGR MOD END
     ]
 
     H0: float
@@ -600,6 +649,7 @@ class CAMBparams(F2003Class):
         except ValueError:
             raise CAMBParamRangeError("No solution for H0 inside of theta_H0_range")
 
+    #> ISiTGR MOD START: Adding new settings to set_cosmology
     def set_cosmology(
         self,
         H0: float | None = None,
@@ -622,6 +672,47 @@ class CAMBparams(F2003Class):
         bbn_predictor: None | str | bbn.BBNPredictor = None,
         theta_H0_range=(10, 100),
         setter_H0=None,
+        MG_parameterization="muSigma", 
+        E11=0.0, 
+        E22=0.0, 
+        c1=1.0, 
+        c2=1.0, 
+        lambda_k=0.0,
+        mu0=0.0, 
+        Sigma0=0.0, 
+        mu1=1.0, 
+        mu2=1.0, 
+        mu3=1.0, 
+        mu4=1.0, 
+        eta1=1.0, 
+        eta2=1.0, 
+        eta3=1.0,
+        eta4=1.0, 
+        Sigma1=1.0, 
+        Sigma2=1.0, 
+        Sigma3=1.0, 
+        Sigma4=1.0,
+        z_div=1.0, 
+        z_TGR=2.0, 
+        z_tw=0.05, 
+        k_c=0.01, 
+        k_tw=0.001, 
+        k_TGR=0.001, 
+        k_S=0.5,
+        beta_1=1.0, 
+        lambda_1=0.0, 
+        exp_s=1.0, 
+        beta_2=1.0, 
+        lambda_2=0.0, 
+        gamma_0=0.54545, 
+        gamma_a=0.0, 
+        t_k=10.0, 
+        d_s=2.0,
+        use_growth_index=None, 
+        damping_yukawa=False,              
+        use_BZ_form=False,
+        redshift_bins=None,
+        scale_bins=None,
     ):
         r"""
         Sets cosmological parameters in terms of physical densities and parameters (e.g. as used in Planck analyses).
@@ -677,7 +768,178 @@ class CAMBparams(F2003Class):
         :param setter_H0: if specified, a function to call to set H0 for each iteration to find thetastar. It should be
          a function(pars: CAMBParams, H0: float). Not normally needed, but can be used e.g. when DE model needs to be
          changed for each H0 because it depends explicitly on H0
+        :param MG_parameterization: set which MG parametrization to be used, None, "mueta", "muSigma", "QD", or "QR".
+        :param k_c: sets scale factor at which transition between bins in scale occurs.
+        :param binning: allows ISiTGR to bin MG parameters. Set as "traditional", "hybrid" or None for functional form.
+        :param E11: MG parameter for functional (mu,eta) parametrization. Defined in arXiv:1502.01590v2.
+        :param E22: MG parameter for functional (mu,eta) parametrization. Defined in arXiv:1502.01590v2.
+        :param mu0: MG parameter for functional (mu,Sigma) parametrization as defined in 1212.3339v2 originally.
+        :param Sigma0: MG parameter for functional (mu,Sigma) parametrization as defined in 1212.3339v2 originally.
+        :param c1: Scale dependence parameter. See Table VI in arXiv:1908.00290.
+        :param c2: Scale dependence parameter. See Table VI in arXiv:1908.00290.
+        :param lambda_k: Scale dependence parameter. See Table VI in arXiv:1908.00290.
+        :param gamma_0: Value of growth index at z=0 (assuming redshift evolution). If use_growth_index="constant", then value of constant growth index.
+        :param gamma_a: Strenght of the redshift evolution of the growth index (assuming redshift evolution).
+        :param t_k: scale damping strenght (for growth index implementation.
+        :param d_s: scale damping smoothing exponent (for growth index implementation).
+        :param beta_1: Strenght parameter associated with mu, when recasting f(R) to the Einstein-frame representation.
+        :param beta_2: Strenght parameter associated with eta, when recasting f(R) to the Einstein-frame representation.
+        :param lambda_1: Modulates the scale dependence in mu.
+        :param lambda_2: Modulates the scale dependence in eta.
+        :param exp_s: Exponent for the time dependence of the scale factor (a^s).
+        :param use_BZ_form: Use the Bertschinger & Zukin form
+        :param use_growth_index: Set use_growth_index to "constant", "taylor", or "wen", if used under MG_parameterization="mueta" then assumes no-slip, if used under MG_parameterization="muSigma" then assumes only-growth.
+        :param z_div: transition redshift between bins.
+        :param z_TGR: redshift below which GR is to be tested.
+        :param z_tw: transition width redshift.
+        :param k_tw: transition width for scale.
+        :param k_TGR: scale below which we recover GR at very large scales.
+        :param k_S: scale above which we force bins to go back to GR (notice scale cuts are supposed to be already applied in the data).
+        :param redshift_bins: Parameterize MG parameters using bins in redshift.
+        :param scale_bins: Parameterize MG parameters using bins in scale.
+        :param highk_binning_damping: Apply a high-k MG damping that forces GR at k>k_S
+        :param lowk_binning_damping: Apply a low-k MG damping that forces GR at k_TGR<k
+        :param hybrid_binning: Apply the hybrid redshift binning with k-functional form (for mueta only)
+        :param mu1: MG parameter for binning method, using (mu,eta) and (mu,Sigma) parametrization.
+        :param mu2: MG parameter for binning method, using (mu,eta) and (mu,Sigma) parametrization.
+        :param mu3: MG parameter for binning method, using (mu,eta) and (mu,Sigma) parametrization.
+        :param mu4: MG parameter for binning method, using (mu,eta) and (mu,Sigma) parametrization.
+        :param eta1: MG parameter for binning method, using (mu,eta) parametrization.
+        :param eta2: MG parameter for binning method, using (mu,eta) parametrization.
+        :param eta3: MG parameter for binning method, using (mu,eta) parametrization.
+        :param eta4: MG parameter for binning method, using (mu,eta) parametrization.
+        :param Sigma1: MG parameter for binning method, using (mu,Sigma) parametrization.
+        :param Sigma2: MG parameter for binning method, using (mu,Sigma) parametrization.
+        :param Sigma3: MG parameter for binning method, using (mu,Sigma) parametrization.
+        :param Sigma4: MG parameter for binning method, using (mu,Sigma) parametrization.
         """
+     #< ISiTGR MOD END
+
+		#> ISiTGR MOD START: Flags for ISiTGR python wrapper to work with different parameterizations
+#		**************************************** ISiTGR Modifications **************************************************
+#       Flags to work with the different MG functional parameterizations. The parameterizations that ISiTGR can handle
+#		for functional form of MG parameters are:
+#		i) Planck model with E11 and E22: In the mueta parameterization
+#		ii) DES model based on mu0 and Sigma0: In the muSigma parameterization
+#		iii) Binning method in redshift: Valid in both mueta or muSigma representations
+#		iv) Binning method in redshift and scale: Valid in both mueta or muSigma representations
+#       v) BZ model: In the mueta representation
+#		vi) Growth index: Valid in both mueta or muSigma representations
+#		**************************************** ISiTGR Modifications **************************************************
+		#(mu,eta)
+        if MG_parameterization == "mueta":
+            self.GR = int(0)
+            if redshift_bins is True:
+                self.ISiTGR_BIN_mueta = True
+                self.mu1=mu1
+                self.mu2=mu2
+                self.mu3=mu3
+                self.mu4=mu4
+                self.eta1=eta1
+                self.eta2=eta2
+                self.eta3=eta3
+                self.eta4=eta4
+                self.z_div=z_div
+                self.z_TGR=z_TGR
+                self.z_tw=z_tw
+                if scale_bins is True:
+                    self.ISiTGR_BIN_scale_bins = True
+                    self.k_c=k_c
+                    self.k_TGR=k_TGR
+                    self.k_S=k_S
+                    self.k_tw=k_tw
+            #(mu,eta=1) for constant growth index
+            if use_growth_index is not None:
+                self.ISiTGR_mueta = True
+                self.ISiTGR_gammaL_noslip = True
+                self.t_k = t_k
+                self.d_s = d_s
+                if damping_yukawa is True:
+                    self.ISiTGR_gammaL_yukawa_damping = True
+                else:
+                    self.ISiTGR_gammaL_yukawa_damping = False
+                if use_growth_index == "constant":
+                    self.gamma_0 = gamma_0
+                elif use_growth_index == "taylor":
+                    self.ISiTGR_growth_index_Taylor = True
+                    self.gamma_0 = gamma_0
+                    self.gamma_a = gamma_a
+                elif use_growth_index == "wen":     
+                    self.ISiTGR_growth_index_Wen = True
+                    self.gamma_0 = gamma_0
+                    self.gamma_a = gamma_a
+                else:
+                    raise CAMBError('Set use_growth_index to either "constant", "taylor", or "wen". ')
+            elif use_BZ_form is True:
+                self.ISiTGR_mueta = True
+                self.ISiTGR_BZ_mueta = True
+                self.beta_1 = beta_1
+                self.beta_2 = beta_2
+                self.lambda_1 = lambda_1
+                self.lambda_2 = lambda_2
+                self.exp_s = exp_s
+            else:
+                self.ISiTGR_mueta = True
+                self.E11=E11
+                self.E22=E22
+                self.c1=c1
+                self.c2=c2
+                self.lambda_k=lambda_k
+        #(mu,Sigma)
+        if MG_parameterization == "muSigma":
+            self.GR = int(0)
+            if redshift_bins is True:
+                self.ISiTGR_BIN_muSigma = True
+                self.mu1=mu1
+                self.mu2=mu2
+                self.mu3=mu3
+                self.mu4=mu4
+                self.Sigma1=Sigma1
+                self.Sigma2=Sigma2
+                self.Sigma3=Sigma3
+                self.Sigma4=Sigma4
+                self.z_div=z_div
+                self.z_TGR=z_TGR
+                self.z_tw=z_tw
+                if scale_bins is True:
+                    self.ISiTGR_BIN_scale_bins = True
+                    self.k_c=k_c
+                    self.k_TGR=k_TGR
+                    self.k_S=k_S
+                    self.k_tw=k_tw
+            #(mu,Sigma=1) for constant growth index
+            if use_growth_index is not None:
+                self.ISiTGR_muSigma = True
+                self.ISiTGR_gammaL_onlygrowth = True
+                self.t_k = t_k
+                self.d_s = d_s
+                if damping_yukawa is True:
+                    self.ISiTGR_gammaL_yukawa_damping = True
+                else:
+                    self.ISiTGR_gammaL_yukawa_damping = False
+                if use_growth_index == "constant":
+                    self.gamma_0 = gamma_0
+                elif use_growth_index == "taylor":
+                    self.ISiTGR_growth_index_Taylor = True
+                    self.gamma_0 = gamma_0
+                    self.gamma_a = gamma_a
+                elif use_growth_index == "wen":
+                    self.ISiTGR_growth_index_Wen = True
+                    self.gamma_0 = gamma_0
+                    self.gamma_a = gamma_a
+                else:
+                    raise CAMBError('Set use_growth_index to either "constant", "taylor", or "wen". ')
+            else:
+                self.ISiTGR_muSigma = True
+                self.mu0=mu0
+                self.Sigma0=Sigma0
+                self.c1=c1
+                self.c2=c2
+                self.lambda_k=lambda_k
+		# No other parameterization is accepted
+        elif MG_parameterization is not None:
+            raise CAMBError('Select a valid parameterization: mueta or muSigma')
+		#< ISiTGR MOD END
 
         if YHe is None:
             # use BBN prediction

@@ -1827,6 +1827,64 @@ class CAMBdata(F2003Class):
         """
         return self.f_CosmomcTheta()
 
+    #> ISiTGR MOD START: Get MG functions
+    def adotoa(self, z):
+        """
+        Get a adotoa for a given z value
+        """
+        a=1/(1+z)
+        adotoa = get_adotoa(byref(self), byref(c_double(a)))
+        return adotoa
+
+    def mu_MG(self,params,z,k):
+        """
+        Get a grid of values for `\mu(a,k)`
+
+        :param redshifts: list of redshifts
+        :param params: optional :class:`~.model.CAMBparams` instance to use
+        :return: array of rs/DV, H, DA, F_AP for each redshift as 2D array
+        """
+        a = 1/(1+z)
+        mu = [get_mu(byref(self),byref(params),byref(c_double(k[j])),byref(c_double(a[i])),
+        byref(c_double(self.adotoa(z[i])))) for i in range(len(a)) for j in range(len(k))]
+        mu = np.reshape(mu, (len(a), len(k)))
+        return mu
+
+    def eta_MG(self,params,z,k):
+        """
+        Get a grid of values for `\eta(a,k)`
+
+        :param redshifts: list of redshifts
+        :param params: optional :class:`~.model.CAMBparams` instance to use
+        :return: array of rs/DV, H, DA, F_AP for each redshift as 2D array
+        """
+        if params.ISiTGR_BIN_mueta is True or params.ISiTGR_mueta is True:
+            a = 1/(1+z)
+            eta = [get_eta(byref(self),byref(params),byref(c_double(k[j])),byref(c_double(a[i])),
+            byref(c_double(self.adotoa(z[i])))) for i in range(len(a)) for j in range(len(k))]
+            eta = np.reshape(eta, (len(a), len(k)))
+        else:
+            eta = 2*self.Sigma_MG(params,z,k)/self.mu_MG(params,z,k) - 1
+        return eta
+
+    def Sigma_MG(self,params,z,k):
+        """
+        Get a grid of values for `\Sigma(a,k)`
+
+        :param redshifts: list of redshifts
+        :param params: optional :class:`~.model.CAMBparams` instance to use
+        :return: array of rs/DV, H, DA, F_AP for each redshift as 2D array
+        """
+        if params.ISiTGR_BIN_muSigma is True or params.ISiTGR_muSigma is True:
+            a = 1/(1+z)
+            Sigma = [get_Sigma(byref(self),byref(params),byref(c_double(k[j])),byref(c_double(a[i])),
+            byref(c_double(self.adotoa(z[i])))) for i in range(len(a)) for j in range(len(k))]
+            Sigma = np.reshape(Sigma, (len(a), len(k)))
+        else:
+            Sigma = self.mu_MG(params,z,k)*(self.eta_MG(params,z,k)+1)/2
+        return Sigma
+    #< ISiTGR MOD END
+
 
 CAMBdata_gettransfers = camblib.__handles_MOD_cambdata_gettransfers
 CAMBdata_gettransfers.argtypes = [POINTER(CAMBdata), POINTER(model.CAMBparams), POINTER(c_int), POINTER(c_int)]

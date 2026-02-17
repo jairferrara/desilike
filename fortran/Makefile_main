@@ -97,8 +97,10 @@ camb: libforutils directories
 libcamb: libforutils directories
 	@$(MAKE) -C $(OUTPUT_DIR) $(MAKEOPT) -r -f ../Makefile_main $(CAMBLIB)
 
+#> ISiTGR MOD START
 python: libforutils_so directories_so
-	@$(MAKE) -C $(DLL_DIR) $(MAKEOPT) -r -f ../Makefile_main camblib.so F90FLAGS="$(SF90FLAGS)" OUTPUT_DIR=$(DLL_DIR)
+	@$(MAKE) -C $(DLL_DIR) $(MAKEOPT) -r -f ../Makefile_main isitgrlib.so F90FLAGS="$(SF90FLAGS)" OUTPUT_DIR=$(DLL_DIR)
+#< ISiTGR MOD END
 
 ../camb: $(CAMBLIB) $(DRIVER).o | silent
 	@$(MAKE) -C .. $(MAKEOPT) -f Makefile_main camb_exe
@@ -107,18 +109,21 @@ camb_exe:
 	$(F90C) $(F90FLAGS) $(MODOUT) $(IFLAG)$(OUTPUT_DIR)/ $(IFLAG)"$(FORUTILS_DIR)" \
 		$(OUTPUT_DIR)/$(DRIVER).o $(OUTPUT_DIR)/$(CAMBLIB) $(F90CRLINK) $(LIBLINK) -o camb
 
-camblib.so: $(CAMBOBJ)
-	@$(MAKE) -C .. $(MAKEOPT) -f Makefile_main $(DLL_DIR)/camblib.so
+#> ISiTGR MOD START
+isitgrlib.so: $(CAMBOBJ)
+	@$(MAKE) -C .. $(MAKEOPT) -f Makefile_main $(DLL_DIR)/isitgrlib.so
+#> ISiTGR MOD END
 
 libcambobj:
     LIBCAMBOBJ = $(patsubst %,$(DLL_DIR)/%.o,$(SOURCEFILES))
 
+#> ISiTGR MOD START
 #cannot link the .a library, or the linker will strip out some things we might need
-$(DLL_DIR)/camblib.so: libcambobj
+$(DLL_DIR)/isitgrlib.so: libcambobj
 	$(F90C) $(SF90FLAGS) $(SMODOUT) $(IFLAG)$(DLL_DIR)/ $(IFLAG)"$(FORUTILS_DIR)"  \
-		$(LIBCAMBOBJ) $(F90CRLINK) $(LIBLINK) -o $(DLL_DIR)/camblib.so
-	cp $(DLL_DIR)/camblib.so $(PYCAMB_OUTPUT_DIR)
-
+		$(LIBCAMBOBJ) $(F90CRLINK) $(LIBLINK) -o $(DLL_DIR)/isitgrlib.so
+	cp $(DLL_DIR)/isitgrlib.so $(PYCAMB_OUTPUT_DIR)
+#> ISiTGR MOD END
 
 $(CAMBLIB): $(CAMBOBJ)
 	$(AR) -r $@ $(CAMBOBJ)

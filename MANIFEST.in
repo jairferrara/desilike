@@ -3,7 +3,7 @@ recursive-include camb *.py
 recursive-include fortran Makefile* *.dat *.?90
 recursive-include forutils Makefile* *.?90
 exclude camb/cambdll.dll
-exclude camb/camblib.so
+exclude camb/isitgrlib.so
 include camb/PArthENoPE_880.2_marcucci.dat
 include camb/PArthENoPE_880.2_standard.dat
 include camb/PRIMAT_Yp_DH_Error.dat

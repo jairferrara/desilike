@@ -14,14 +14,15 @@ from wheel.bdist_wheel import bdist_wheel as _bdist_wheel
 file_dir = os.path.abspath(os.path.dirname(__file__))
 os.chdir(file_dir)
 
-sys.path.insert(0, os.path.join(file_dir, "camb"))
+#> ISiTGR MOD START
+sys.path.insert(0, os.path.join(file_dir, "isitgr"))
 _compile: Any = __import__("_compilers")
 
 if _compile.is_windows:
-    DLLNAME = "cambdll.dll"
+    DLLNAME = "isitgrdll.dll"
 else:
-    DLLNAME = "camblib.so"
-
+    DLLNAME = "isitgrlib.so"
+#> ISiTGR MOD END
 
 def get_forutils():
     fpath = os.getenv("FORUTILSPATH")
@@ -95,7 +96,9 @@ def clean_dir(path, rmdir=False):
 def make_library(cluster=False):
     os.chdir(os.path.join(file_dir, "fortran"))
     pycamb_path = ".."
-    lib_file = os.path.join(pycamb_path, "camb", DLLNAME)
+    #> ISiTGR MOD START
+    lib_file = os.path.join(pycamb_path, "isitgr", DLLNAME)
+    #> ISiTGR MOD END
     if _compile.is_windows or not _compile.check_ifort():
         ok, gfortran_version = _compile.check_gfortran(msg=True)
         if ok and "8.2.0" in gfortran_version:
@@ -162,10 +165,12 @@ def make_library(cluster=False):
         if need_compile or not os.path.exists(lib_file):
             if os.path.exists(lib_file):
                 # raise an exception if the file in use and cannot be deleted
+                #> ISiTGR MOD START
                 try:
                     os.remove(lib_file)
                 except OSError:
-                    raise OSError("dll file in use. Stop python codes and notebook kernels that are using camb.")
+                    raise OSError("dll file in use. Stop python codes and notebook kernels that are using isitgr.")
+                #> ISiTGR MOD END
             print("Compiling sources...")
             cmd = COMPILER + " " + FFLAGS + " " + " ".join(ofiles) + f" -o {lib_file} -J{tmpdir}"
             print(cmd)
@@ -181,17 +186,23 @@ def make_library(cluster=False):
             )
         get_forutils()
         print("Compiling source...")
+        #> ISiTGR MOD START
         subprocess.call(
-            "make python PYCAMB_OUTPUT_DIR=%s/camb/ CLUSTER_SAFE=%d"
+            "make python PYCAMB_OUTPUT_DIR=%s/isitgr/ CLUSTER_SAFE=%d"
             % (pycamb_path, int(cluster if not os.getenv("GITHUB_ACTIONS") else 1)),
             shell=True,
         )
+        #> ISiTGR MOD END
         subprocess.call("chmod 755 %s" % lib_file, shell=True)
 
-    if not os.path.isfile(os.path.join(pycamb_path, "camb", DLLNAME)):
+    #> ISiTGR MOD START
+    if not os.path.isfile(os.path.join(pycamb_path, "isitgr", DLLNAME)):
         sys.exit("Compilation failed")
+    #> ISiTGR MOD END
     tem_file = "HighLExtrapTemplate_lenspotentialCls.dat"
-    tem = os.path.join(pycamb_path, "camb", tem_file)
+    #> ISiTGR MOD START
+    tem = os.path.join(pycamb_path, "isitgr", tem_file)
+    #> ISiTGR MOD END
     if not os.path.exists(tem) or os.path.getmtime(tem) < os.path.getmtime(tem_file):
         shutil.copy(tem_file, tem)
 
@@ -273,8 +284,9 @@ class BuildExtCommand(build_ext):
 
 
 if __name__ == "__main__":
+    #> ISiTGR MOD START
     setup(
-        name=os.getenv("CAMB_PACKAGE_NAME", "camb"),
+        name=os.getenv("ISITGR_PACKAGE_NAME", "isitgr"),
         zip_safe=False,
         cmdclass={
             "build_py": SharedLibrary,
@@ -288,11 +300,11 @@ if __name__ == "__main__":
             "install": InstallPlatlib,
             "build_ext": BuildExtCommand,
         },
-        ext_modules=[Extension("camb.camblib", [])],
-        packages=["camb", "camb.tests"],
+        ext_modules=[Extension("isitgr.isitgrlib", [])],
+        packages=["isitgr", "isitgr.tests"],
         platforms="any",
         package_data={
-            "camb": [
+            "isitgr": [
                 DLLNAME,
                 "HighLExtrapTemplate_lenspotentialCls.dat",
                 "PArthENoPE_880.2_marcucci.dat",
@@ -303,3 +315,4 @@ if __name__ == "__main__":
             ]
         },
     )
+    #> ISiTGR MOD END

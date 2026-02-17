@@ -736,4 +736,82 @@
 
     end subroutine GetBackgroundThermalEvolution
 
+    !> ISiTGR MOD START: CGQ to get MG functions in python wrapper
+    function get_adotoa(State, a)
+        use CAMBmain
+        type(CAMBdata) :: State
+        real(dl) :: a, get_adotoa
+        procedure(obj_function) :: dtauda
+
+        get_adotoa = 1/(a*dtauda(State,a))
+
+    end function get_adotoa
+
+    function get_mu(State,CP,k,a,adotoa)
+        use constants
+      	use results
+        Type(CAMBdata) :: State
+        type(CAMBparams) :: CP
+        real(dl) :: k, a, adotoa
+        real(dl) get_mu
+        adotoa = get_adotoa(State,a)
+        get_mu = ISiTGR_mu(State,k,a,adotoa)
+    end function get_mu
+
+    function get_eta(State,CP,k,a,adotoa)
+        use constants
+      	use results
+        Type(CAMBdata) :: State
+        type(CAMBparams) :: CP
+        real(dl) :: k, a, adotoa
+        real(dl) get_eta
+        adotoa = get_adotoa(State,a)
+        get_eta = ISiTGR_eta(State,k,a,adotoa)
+    end function get_eta
+
+    function get_Sigma(State,CP,k,a,adotoa)
+        use constants
+      	use results
+        Type(CAMBdata) :: State
+        type(CAMBparams) :: CP
+        real(dl) :: k, a, adotoa
+        real(dl) get_Sigma
+        adotoa = get_adotoa(State,a)
+        get_Sigma = ISiTGR_Sigma(State,k,a,adotoa)
+    end function get_Sigma
+
+    function get_mudot(State,CP,k,a,adotoa,Hdot)
+        use constants
+      	use results
+        Type(CAMBdata) :: State
+        type(CAMBparams) :: CP
+        real(dl) :: k, a, adotoa, Hdot
+        real(dl) get_mudot
+        adotoa = get_adotoa(State,a)
+        get_mudot = ISiTGR_mu(State,k,a,adotoa)
+    end function get_mudot
+
+    function get_etadot(State,CP,k,a,adotoa,Hdot)
+        use constants
+      	use results
+        Type(CAMBdata) :: State
+        type(CAMBparams) :: CP
+        real(dl) :: k, a, adotoa, Hdot
+        real(dl) get_etadot
+        adotoa = get_adotoa(State,a)
+        get_etadot = ISiTGR_eta(State,k,a,adotoa)
+    end function get_etadot
+
+    function get_Sigmadot(State,CP,k,a,adotoa,Hdot)
+        use constants
+      	use results
+        Type(CAMBdata) :: State
+        type(CAMBparams) :: CP
+        real(dl) :: k, a, adotoa, Hdot
+        real(dl) get_Sigmadot
+        adotoa = get_adotoa(State,a)
+        get_Sigmadot = ISiTGR_Sigma(State,k,a,adotoa)
+    end function get_Sigmadot
+    !< ISiTGR MOD END
+
     end module handles

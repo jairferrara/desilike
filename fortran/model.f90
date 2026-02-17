@@ -188,6 +188,64 @@
         Type(TSourceWindowHolder), allocatable :: SourceWindows(:)
 
         Type(TCustomSourceParams) :: CustomSources
+
+		!> ISiTGR MOD START
+        !CGQ: Models below
+        !1) mu-eta parameterization used by Planck Collaboration (ArXiv: 1502.01590, 1807.06209)
+		real(dl) :: E11=0._dl
+		real(dl) :: E22=0._dl
+		real(dl) :: c1=1._dl
+		real(dl) :: c2=1._dl
+		real(dl) :: lambda_k=0._dl
+        !2) mu-Sigma parameterization used by Dark Energy Survey collaboration (Based on CFHTLenS, ArXiv: 1212.3339)
+		real(dl) :: mu0=0._dl
+		real(dl) :: Sigma0=0._dl
+        !3) Generalized Binning method (values are set to be the default used in ArXiv: 2010.12519)
+		real(dl) :: mu1=0._dl
+		real(dl) :: mu2=0._dl
+		real(dl) :: mu3=0._dl
+		real(dl) :: mu4=0._dl
+        real(dl) :: eta1=0._dl
+		real(dl) :: eta2=0._dl
+		real(dl) :: eta3=0._dl
+		real(dl) :: eta4=0._dl
+        real(dl) :: Sigma1=0._dl
+		real(dl) :: Sigma2=0._dl
+		real(dl) :: Sigma3=0._dl
+		real(dl) :: Sigma4=0._dl
+        real(dl) :: z_div=1._dl !This is the size of each z-bin !models 1 and 2
+        real(dl) :: z_TGR=2._dl !The redshift below which we test GR usueally 2*z_div !models 1 and 2
+        real(dl) :: z_tw=0.05_dl  !transition width between redshift bins !models 1 and 2
+        real(dl) :: k_c=0.1_dl ! The k value where we change k-bins for true binning !models 1-6
+        real(dl) :: k_tw=0.001_dl  !transition width between k-bins. !models 1 and 2
+        real(dl) :: k_TGR=0.001_dl  !scale below which we recover GR at very large scales
+        real(dl) :: k_S=0.5_dl  !scale above which we force bins to go back to GR (notice scale cuts are supposed to be already applied in the data)
+        !4) Bertschinger-Zukin parameterization (Adapted from ArXiv: 1612.00812)
+        real(dl) :: beta_1 = 1._dl
+        real(dl) :: lambda_1 = 1._dl
+        real(dl) :: exp_s = 1._dl
+        real(dl) :: beta_2 = 1._dl
+        real(dl) :: lambda_2 = 1._dl
+        !5) Growth index with damping
+        real(dl) :: gamma_0 = 0.545454_dl
+        real(dl) :: gamma_a = 0._dl
+        real(dl) :: t_k = 10._dl
+        real(dl) :: d_s = 2._dl
+        !Logical flags to change between models
+        logical :: ISiTGR_mueta=.false. !for functional form
+        logical :: ISiTGR_muSigma=.false. !for functional form
+		logical :: ISiTGR_BIN_mueta=.false. !for binning method
+		logical :: ISiTGR_BIN_muSigma=.false. !for binning method
+        logical :: ISiTGR_BIN_scale_bins=.false. !for binning method
+        logical :: ISiTGR_BZ_mueta=.false. !Use Bertschinger & Zukin models 
+        logical :: ISiTGR_gammaL_noslip=.false. !use growth index and eta=1 (if no other flag is used then assumes gamma=constant).
+        logical :: ISiTGR_gammaL_onlygrowth=.false. !use growth index and Sigma=1 (if no other flag is used then assumes gamma=constant).
+        logical :: ISiTGR_gammaL_yukawa_damping=.false. !use a yukawa-like damping for the growth index (otherwise use a binning-like transition)
+        logical :: ISiTGR_growth_index_Taylor=.false. !use redshift evolution for gamma (based on a Taylor series in a around a=1).
+		logical :: ISiTGR_growth_index_Wen=.false. !use redshift evolution for gamma (based on Arxiv:2304.07281 parameterization by Y. Wen et al.).
+		integer :: GR = 1 !to use default GR without MG, GR=0 means MG formalism is on
+		!< ISiTGR MOD END
+
     contains
     procedure, nopass :: PythonClass => CAMBparams_PythonClass
     procedure, nopass :: SelfPointer => CAMBparams_SelfPointer
