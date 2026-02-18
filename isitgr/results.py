@@ -1838,7 +1838,7 @@ class CAMBdata(F2003Class):
 
     def mu_MG(self,params,z,k):
         """
-        Get a grid of values for `\mu(a,k)`
+        Get a grid of values for :math:`\mu(a,k)`
 
         :param redshifts: list of redshifts
         :param params: optional :class:`~.model.CAMBparams` instance to use
@@ -1852,7 +1852,7 @@ class CAMBdata(F2003Class):
 
     def eta_MG(self,params,z,k):
         """
-        Get a grid of values for `\eta(a,k)`
+        Get a grid of values for :math:`\eta(a,k)`
 
         :param redshifts: list of redshifts
         :param params: optional :class:`~.model.CAMBparams` instance to use
@@ -1869,7 +1869,7 @@ class CAMBdata(F2003Class):
 
     def Sigma_MG(self,params,z,k):
         """
-        Get a grid of values for `\Sigma(a,k)`
+        Get a grid of values for :math:`\Sigma(a,k)`
 
         :param redshifts: list of redshifts
         :param params: optional :class:`~.model.CAMBparams` instance to use
