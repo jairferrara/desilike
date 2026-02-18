@@ -1837,7 +1837,7 @@ class CAMBdata(F2003Class):
         return adotoa
 
     def mu_MG(self,params,z,k):
-        """
+        r"""
         Get a grid of values for :math:`\mu(a,k)`
 
         :param redshifts: list of redshifts
@@ -1851,7 +1851,7 @@ class CAMBdata(F2003Class):
         return mu
 
     def eta_MG(self,params,z,k):
-        """
+        r"""
         Get a grid of values for :math:`\eta(a,k)`
 
         :param redshifts: list of redshifts
@@ -1868,7 +1868,7 @@ class CAMBdata(F2003Class):
         return eta
 
     def Sigma_MG(self,params,z,k):
-        """
+        r"""
         Get a grid of values for :math:`\Sigma(a,k)`
 
         :param redshifts: list of redshifts
