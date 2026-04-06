@@ -34,7 +34,7 @@ def update_parameters(user_kwargs, sampler, **desilike_kwargs):
         Keyword arguments received from the user.
     sampler : str
         Name of the sampler. This is used to make warnings informative.
-    **desilike_kwargs : dict, optional
+    **desilike_kwargs
         Keyword arguments enforced by desilike.
 
     Returns
@@ -207,7 +207,7 @@ class BaseSampler(BaseClass, ABC, metaclass=BaseSamplerMeta):
             Samples of varied parameters.
         derived : numpy.ndarray of shape (n_samples, n_derived)
             Samples of derived parameters.
-        **kwargs : dict, optional
+        **kwargs
             Extra parameters such as weights.
 
         Returns
@@ -254,7 +254,7 @@ class StaticSampler(BaseSampler):
 
         Parameters
         ----------
-        **kwargs: dict, optional
+        **kwargs
             Extra keyword arguments.
 
         Returns
@@ -270,7 +270,7 @@ class StaticSampler(BaseSampler):
 
         Parameters
         ----------
-        **kwargs : dict, optional
+        **kwargs
             Keyword arguments passed to the ``get_samples`` method.
 
         Returns
@@ -323,7 +323,7 @@ class PopulationSampler(BaseSampler):
 
         Parameters
         ----------
-        **kwargs: dict, optional
+        **kwargs
             Extra keyword arguments passed to sampler's run method.
 
         Returns
@@ -343,7 +343,7 @@ class PopulationSampler(BaseSampler):
 
         Parameters
         ----------
-        **kwargs : dict, optional
+        **kwargs
             Keyword arguments passed to the run function of the sampler.
 
         Returns
