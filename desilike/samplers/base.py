@@ -301,12 +301,14 @@ class StaticSampler(BaseSampler):
         return self.pool.bcast(self.samples if self.pool.main else None)
 
     def save(self):
-        """Write internal calculations to disk."""
+        """Save internal calculations to disk."""
+        super().save()
         if self.pool.main:
             self.samples.save(self.directory / 'samples.npz')
 
     def load(self):
-        """Read internal calculations from disk."""
+        """Load internal calculations from disk."""
+        super().load()
         if self.pool.main:
             self.samples = Samples.load(self.directory / 'samples.npz')
 
@@ -710,7 +712,7 @@ class MarkovChainSampler(BaseSampler):
 
     def save(self):
         """Write all results to disk."""
-        super().write()
+        super().save()
         if self.pool.main:
             for i, chain in enumerate(self.chains):
                 chain.save(self.directory / f'chain_{i + 1}.npz')
@@ -718,7 +720,7 @@ class MarkovChainSampler(BaseSampler):
 
     def load(self):
         """Read internal calculations from disk."""
-        super().read()
+        super().load()
         if self.pool.main:
             self.chains = [Samples.load(self.directory / f'chain_{i + 1}.npz')
                            for i in range(self.n_chains)]
