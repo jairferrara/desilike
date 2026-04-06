@@ -105,14 +105,11 @@ class BaseSampler(BaseClass, ABC, metaclass=BaseSamplerMeta):
 
         if self.directory is not None:
             try:
-                self.read()
+                self.load()
             except FileNotFoundError:
                 pass
 
-        if hasattr(self, 'rng') and rng is None:
-            pass
-        else:
-            # Overwrite the RNG that may be read.
+        if not hasattr(self, 'rng'):
             if isinstance(rng, int) or rng is None:
                 rng = np.random.default_rng(seed=rng)
             self.rng = rng
@@ -231,13 +228,13 @@ class BaseSampler(BaseClass, ABC, metaclass=BaseSamplerMeta):
 
         return samples
 
-    def write(self):
+    def save(self):
         """Write all results to disk."""
         if self.pool.main:
             with open(self.directory / 'rng.json', 'w') as fstream:
                 json.dump(self.rng.bit_generator.state, fstream)
 
-    def read(self):
+    def load(self):
         """Read internal calculations from disk."""
         if self.pool.main:
             with open(self.directory / 'rng.json', 'r') as fstream:
@@ -290,7 +287,7 @@ class StaticSampler(BaseSampler):
                 log_posterior = np.array([r[0] for r in results])
                 derived = np.array([r[1] for r in results])
 
-                self.results = self.array_to_samples(
+                self.samples = self.array_to_samples(
                     samples, derived, log_posterior=log_posterior,
                     log_weight=log_posterior, log_prior=log_prior)
 
@@ -299,19 +296,19 @@ class StaticSampler(BaseSampler):
                 self.pool.wait()
 
         if self.directory is not None:
-            self.write()
+            self.save()
 
-        return self.pool.bcast(self.results if self.pool.main else None)
+        return self.pool.bcast(self.samples if self.pool.main else None)
 
-    def write(self):
+    def save(self):
         """Write internal calculations to disk."""
         if self.pool.main:
-            self.results.save(self.directory / 'results.npz')
+            self.samples.save(self.directory / 'samples.npz')
 
-    def read(self):
+    def load(self):
         """Read internal calculations from disk."""
         if self.pool.main:
-            self.results = Samples.load(self.directory / 'results.npz')
+            self.samples = Samples.load(self.directory / 'samples.npz')
 
 
 class PopulationSampler(BaseSampler):
@@ -693,11 +690,11 @@ class MarkovChainSampler(BaseSampler):
 
             # Write results.
             if self.directory is not None and steps % save_every == 0:
-                self.write()
+                self.save()
 
         # Write results in case it wasn't written in the last iteration.
         if self.directory is not None and steps % save_every != 0:
-            self.write()
+            self.save()
 
         if self.pool.main:
             if isinstance(burn_in, float):
@@ -711,7 +708,7 @@ class MarkovChainSampler(BaseSampler):
         else:
             return chains
 
-    def write(self):
+    def save(self):
         """Write all results to disk."""
         super().write()
         if self.pool.main:
@@ -719,7 +716,7 @@ class MarkovChainSampler(BaseSampler):
                 chain.save(self.directory / f'chain_{i + 1}.npz')
             np.save(self.directory / 'checks.npy', self.checks)
 
-    def read(self):
+    def load(self):
         """Read internal calculations from disk."""
         super().read()
         if self.pool.main:
