@@ -936,8 +936,10 @@ class CAMBparams(F2003Class):
                 self.c1=c1
                 self.c2=c2
                 self.lambda_k=lambda_k
+        if MG_parameterization == "GR":
+            self.GR = int(1)
 		# No other parameterization is accepted
-        elif MG_parameterization is not None:
+        if MG_parameterization != "mueta" and MG_parameterization != "muSigma" and MG_parameterization != "GR":
             raise CAMBError('Select a valid parameterization: mueta or muSigma')
 		#< ISiTGR MOD END
 
