@@ -434,6 +434,7 @@ class CAMBparams(F2003Class):
         ("ISiTGR_gammaL_yukawa_damping", c_bool, "flag to use growth index, with a yukawa damping (if false, use binning-like damping)"),
         ("ISiTGR_growth_index_Taylor", c_bool, "flag to assume a redshift evolution for the growth index (based on a Taylor series in a around a=1)."),
         ("ISiTGR_growth_index_Wen", c_bool, "flag to assume a redshift evolution for the growth index (based on Arxiv:2304.07281 parameterization by Y. Wen et al.)."),
+        ("ISiTGR_nDGP", c_bool, "allow for nDGP gravity"),
         ("GR", c_int, "GR switch on/off")
         #< ISiTGR MOD END
     ]
@@ -713,6 +714,7 @@ class CAMBparams(F2003Class):
         use_BZ_form=False,
         redshift_bins=None,
         scale_bins=None,
+        use_nDGP=False,
     ):
         r"""
         Sets cosmological parameters in terms of physical densities and parameters (e.g. as used in Planck analyses).
@@ -929,6 +931,8 @@ class CAMBparams(F2003Class):
                     self.gamma_a = gamma_a
                 else:
                     raise CAMBError('Set use_growth_index to either "constant", "taylor", or "wen". ')
+            elif use_nDGP is True:
+                self.ISiTGR_nDGP = True
             else:
                 self.ISiTGR_muSigma = True
                 self.mu0=mu0

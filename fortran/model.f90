@@ -231,6 +231,8 @@
         real(dl) :: gamma_a = 0._dl
         real(dl) :: t_k = 10._dl
         real(dl) :: d_s = 2._dl
+        !6) nDGP
+        real(dl) :: H0r_c = 0.0
         !Logical flags to change between models
         logical :: ISiTGR_mueta=.false. !for functional form
         logical :: ISiTGR_muSigma=.false. !for functional form
@@ -243,6 +245,7 @@
         logical :: ISiTGR_gammaL_yukawa_damping=.false. !use a yukawa-like damping for the growth index (otherwise use a binning-like transition)
         logical :: ISiTGR_growth_index_Taylor=.false. !use redshift evolution for gamma (based on a Taylor series in a around a=1).
 		logical :: ISiTGR_growth_index_Wen=.false. !use redshift evolution for gamma (based on Arxiv:2304.07281 parameterization by Y. Wen et al.).
+        logical :: ISiTGR_nDGP=.false. !allow for nDGP gravity
 		integer :: GR = 1 !to use default GR without MG, GR=0 means MG formalism is on
 		!< ISiTGR MOD END
 

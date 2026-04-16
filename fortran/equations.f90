@@ -2162,6 +2162,7 @@
     real(dl) :: s1_k, s2_k
     real(dl) :: F_k
     real(dl) :: mu_MG, omegav, omegam_t, omegak_t, gamma, gammastar !star denotes derivative with respect to natural logarithm of the scale factor (so no adotoa=(da/dtau)/a is present)
+    real(dl) :: beta !for DGP
     !binning method expression
     if((CP%ISiTGR_BIN_mueta) .or. (CP%ISiTGR_BIN_muSigma)) then
         if (CP%ISiTGR_BIN_scale_bins) then
@@ -2241,6 +2242,14 @@
                 F_k = 0.5d0 * ( 1.d0 + tanh( ( k - CP%t_k * adotoa ) / CP%d_s ) )
             end if
             mu_MG = 1.d0 + (mu_MG - 1.d0) * F_k
+        else if (CP%ISiTGR_nDGP) then
+            beta = 1.d0 + 2.d0 * (adotoa / (a * CP%H0)) * CP%H0rc * &
+                   ( 1.d0 &
+                   - 0.5d0 * OmegaMatter(State,a,adotoa) &
+                   - 0.5d0 * (1.d0 + w_dark_energy_t) * OmegaDE(State,a,adotoa) &
+                   - (1.d0/3.d0) * OmegaK(State,a,adotoa) )
+
+            mu_MG = 1.d0 + 1.d0 / (3.d0 * beta)
         else
             omegav = State%Omega_de ! Omega_de is total dark energy density today
             !adding an extra factor for scale dependence
@@ -2263,6 +2272,7 @@
     real(dl) :: mudot_MG, mu_MG, mu_MG_undamped, mudot_MG_undamped, mu_MG_pivot, mudot_MG_pivot
     real(dl) :: F_k, Fdot_k
     real(dl) :: s1_k, s2_k, s1_k_dot, s2_k_dot, omegav, omegam_t, omegak_t, gamma, gammastar, gammastarstar, term1, term2, term3 !star denotes derivative with respect to natural logarithm of the scale factor (so no adotoa=(da/dtau)/a is present)
+    real(dl) :: beta !for DGP
     
     !binning method expression
     if((CP%ISiTGR_BIN_mueta) .or. (CP%ISiTGR_BIN_muSigma)) then
@@ -2390,6 +2400,26 @@
 
             mu_MG = mu_MG_pivot + (mu_MG_undamped - mu_MG_pivot) * F_k
             mudot_MG = (1.d0 - F_k) * mudot_MG_pivot  + F_k * mudot_MG_undamped + (mu_MG_undamped - mu_MG_pivot) * Fdot_k
+        else if (CP%ISiTGR_nDGP) then
+            beta = 1.d0 + 2.d0 * (adotoa / (a * CP%H0)) * CP%H0rc * &
+                   ( 1.d0 &
+                   - 0.5d0 * OmegaMatter(State,a,adotoa) &
+                   - 0.5d0 * (1.d0 + w_dark_energy_t) * OmegaDE(State,a,adotoa) &
+                   - (1.d0/3.d0) * OmegaK(State,a,adotoa) )
+
+            mu_MG = 1.d0 + 1.d0 / (3.d0 * beta)
+
+            mudot_MG = -(2.d0 * CP%H0rc / (3.d0 * beta**2)) * &
+                       ( ((Hdot - 2.d0*adotoa**2) / (a * CP%H0)) * &
+                         ( 1.d0 &
+                         - 0.5d0 * OmegaMatter(State,a,adotoa) &
+                         - 0.5d0 * (1.d0 + w_dark_energy_t) * OmegaDE(State,a,adotoa) &
+                         - (1.d0/3.d0) * OmegaK(State,a,adotoa) ) &
+                       + (adotoa / (a * CP%H0)) * &
+                         ( -0.5d0 * OmegaMatterdot(State,a,adotoa,Hdot) &
+                         - 0.5d0 * ( w_dark_energy_dot * OmegaDE(State,a,adotoa) + &
+                                     (1.d0 + w_dark_energy_t) * OmegaDEdot(State,a,adotoa,Hdot) ) &
+                         - (1.d0/3.d0) * OmegaKdot(State,a,adotoa,Hdot) ) )
         else
             omegav = State%Omega_de ! Omega_de is total dark energy density today
             !adding an extra factor for scale dependence
@@ -2513,6 +2543,8 @@
     else
         if (CP%ISiTGR_gammaL_onlygrowth) then
             Sigma_MG = 1.d0
+        else if (CP%ISiTGR_nDGP) then
+            Sigma_MG = 1.d0
         else
             !adding an extra factor for scale dependence
             s2_k = (CP%lambda_k*(adotoa/a)/k)**2.d0
@@ -2551,6 +2583,8 @@
     !functional form expression
     else
         if (CP%ISiTGR_gammaL_onlygrowth) then
+            Sigmadot_MG = 0.d0
+        else if (CP%ISiTGR_nDGP) then
             Sigmadot_MG = 0.d0
         else
             !adding an extra factor for scale dependence
