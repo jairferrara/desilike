@@ -423,6 +423,7 @@ class CAMBparams(F2003Class):
         ("gamma_a", c_double, "strenght of the redshift evolution of the growth index (assuming redshift evolution)"),
         ("t_k", c_double, "scale damping strenght (for growth index implementation)"),
         ("d_s", c_double, "scale damping smoothing exponent (for growth index implementation)"),
+        ("r_c", c_double, "value for the nDGP characteristic mass scale (in H0 units)"),
         ("ISiTGR_mueta", c_bool, "flag to use (mu,eta) parametrization for functional form"),
         ("ISiTGR_muSigma", c_bool, "flag to use (mu,Sigma) parametrization for functional form"),
         ("ISiTGR_BIN_mueta", c_bool, "flag to use (mu,eta) parametrization for binning method"),
@@ -709,6 +710,7 @@ class CAMBparams(F2003Class):
         gamma_a=0.0, 
         t_k=10.0, 
         d_s=2.0,
+        r_c=0.0,
         use_growth_index=None, 
         damping_yukawa=False,              
         use_BZ_form=False,
@@ -933,6 +935,7 @@ class CAMBparams(F2003Class):
                     raise CAMBError('Set use_growth_index to either "constant", "taylor", or "wen". ')
             elif use_nDGP is True:
                 self.ISiTGR_nDGP = True
+                self.H0r_c = r_c
             else:
                 self.ISiTGR_muSigma = True
                 self.mu0=mu0
