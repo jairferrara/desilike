@@ -2243,7 +2243,7 @@
             end if
             mu_MG = 1.d0 + (mu_MG - 1.d0) * F_k
         else if (CP%ISiTGR_nDGP) then
-            beta = 1.d0 + 2.d0 * (adotoa / (a * CP%H0)) * CP%H0rc * &
+            beta = 1.d0 + 2.d0 * ( (adotoa / a) / (CP%H0 * 1000.d0 / c) ) * CP%H0rc * &
                    ( 1.d0 &
                    - 0.5d0 * OmegaMatter(State,a,adotoa) &
                    - 0.5d0 * (1.d0 + w_dark_energy_t) * OmegaDE(State,a,adotoa) &
@@ -2401,7 +2401,7 @@
             mu_MG = mu_MG_pivot + (mu_MG_undamped - mu_MG_pivot) * F_k
             mudot_MG = (1.d0 - F_k) * mudot_MG_pivot  + F_k * mudot_MG_undamped + (mu_MG_undamped - mu_MG_pivot) * Fdot_k
         else if (CP%ISiTGR_nDGP) then
-            beta = 1.d0 + 2.d0 * (adotoa / (a * CP%H0)) * CP%H0rc * &
+            beta = 1.d0 + 2.d0 * ((adotoa / a) * c / (CP%H0 * 1000.d0)) * CP%H0rc * &
                    ( 1.d0 &
                    - 0.5d0 * OmegaMatter(State,a,adotoa) &
                    - 0.5d0 * (1.d0 + w_dark_energy_t) * OmegaDE(State,a,adotoa) &
@@ -2410,12 +2410,12 @@
             mu_MG = 1.d0 + 1.d0 / (3.d0 * beta)
 
             mudot_MG = -(2.d0 * CP%H0rc / (3.d0 * beta**2)) * &
-                       ( ((Hdot - 2.d0*adotoa**2) / (a * CP%H0)) * &
+                       ( (((Hdot - 2.d0*adotoa**2) / a) * c / (CP%H0 * 1000.d0)) * &
                          ( 1.d0 &
                          - 0.5d0 * OmegaMatter(State,a,adotoa) &
                          - 0.5d0 * (1.d0 + w_dark_energy_t) * OmegaDE(State,a,adotoa) &
                          - (1.d0/3.d0) * OmegaK(State,a,adotoa) ) &
-                       + (adotoa / (a * CP%H0)) * &
+                       + ((adotoa / a) * c / (CP%H0 * 1000.d0)) * &
                          ( -0.5d0 * OmegaMatterdot(State,a,adotoa,Hdot) &
                          - 0.5d0 * ( w_dark_energy_dot * OmegaDE(State,a,adotoa) + &
                                      (1.d0 + w_dark_energy_t) * OmegaDEdot(State,a,adotoa,Hdot) ) &
