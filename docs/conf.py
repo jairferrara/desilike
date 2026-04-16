@@ -33,8 +33,6 @@ extensions = [
     'sphinx.ext.viewcode'
 ]
 
-napoleon_use_param = False
-
 # -- Project information -----------------------------------------------------
 
 project = 'desilike'
