@@ -18,7 +18,254 @@
         dtauda = 0
     else
         dtauda = sqrt(3 / grhoa2)
-    end if
+    end if#!/usr/bin/env python3
+"""
+Compare EdS vs beyond-EdS using EMULATORS ONLY (no exact theory).
+
+- Loads two emulators (eds + beds) for the same tracer/tag and k-range.
+- Evaluates P_ell(k) for a single mu0 value (default 0.3).
+- Plots:
+  (left)  k P_ell(k) for EdS and bEdS
+  (right) 100 * (bEdS - EdS) / EdS  [%]
+- Prints simple precision summary numbers for each ell.
+
+Assumes your emulator naming convention:
+  EdS : emu-fs_isitgr_fkptjax_folps_eds_mu0_{tag}_k0.019-0.201_l02.npy
+  bEdS: emu-fs_isitgr_fkptjax_folps_mu0_{tag}_k0.019-0.201_l02.npy
+"""
+
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+from pathlib import Path
+
+# -------------------------------------------------------------------
+# Environment (set BEFORE importing fkptjax/folps stacks)
+# -------------------------------------------------------------------
+os.environ.setdefault("FOLPS_BACKEND", "jax")
+# os.environ.setdefault("JAX_DISABLE_JIT", "1")  # uncomment if debugging
+
+from desilike import parameter
+from desilike.theories import Cosmoprimo
+from desilike.theories.galaxy_clustering import DirectPowerSpectrumTemplate
+from cosmoprimo.fiducial import DESI
+from desilike.emulators import EmulatedCalculator
+
+try:
+    from desilike.theories.galaxy_clustering import fkptjaxTracerPowerSpectrumMultipoles
+except Exception as exc:
+    raise ImportError(
+        "Could not import fkptjaxTracerPowerSpectrumMultipoles.\n"
+        "Make sure your desilike branch exposes it in desilike.theories.galaxy_clustering."
+    ) from exc
+
+
+# =====================================================
+# USER SETTINGS
+# =====================================================
+data_dir = Path("/n/home12/cgarciaquintero/DESI/MG_validation/synthetic_noiseless/data_vectors")
+emu_dir  = Path("/n/netscratch/eisenstein_lab/Lab/cristhian/desilike/Emulators")
+
+file_tag   = "BGS"        # {BGS, LRG1, LRG2, LRG3, ELG, QSO}
+tracer_tag = file_tag
+fid_model  = "LCDM"
+
+MG_model   = "HDKI"
+mg_variant = "mu_OmDE"
+ells       = (0, 2)
+freedom    = "max"
+prior_basis = "APscaling"  # "standard" or "physical" or "APscaling"
+
+RESCALE_PS  = False       # your wrapper often expects False
+
+# Cuts matching emulator filename k0.019-0.201
+kmin_cut = 0.02
+kmax_cut = 0.20
+
+# Effective redshift (BGS)
+z_eff = 0.295
+b1_fid = 1.5
+
+# Cosmology (fixed) + mu0 to compare
+h      = 0.6736
+ombh2  = 0.02237
+omch2  = 0.12
+As     = 2.083e-09
+ns     = 0.9649
+Neff   = 3.046
+mnu    = 0.06
+
+mu0 = 0.3
+
+# Nuisance parameters (fixed; must be consistent across both emulators)
+b1 = 1.5
+b2 = -0.5247206065
+bs2 = 0.0
+b3nl = 0.0
+alpha0, alpha2, alpha4 = 3.0, -1.0, 0.0
+ctilde, alpha0shot, alpha2shot = 0.0, 0.08, -2.0
+pshotp = 1.0e4
+
+
+# =====================================================
+# Emulator filenames (your convention)
+# =====================================================
+def emu_filename_eds(tag: str) -> str:
+    return f"emu-fs_isitgr_fkptjax_folps_eds_mu0_{tag}_k0.019-0.201_l02.npy"
+
+def emu_filename_beds(tag: str) -> str:
+    return f"emu-fs_isitgr_fkptjax_folps_mu0_{tag}_k0.019-0.201_l02.npy"
+
+
+# =====================================================
+# Load k grid and apply cuts
+# =====================================================
+k_all = np.loadtxt(data_dir / f"{file_tag}_{fid_model}_k.txt")
+i0 = int(np.searchsorted(k_all, kmin_cut, side="left"))
+i1 = int(np.searchsorted(k_all, kmax_cut, side="right"))
+k = k_all[i0:i1]
+N = len(k)
+print(f"k range after cut: [{k.min():.4f}, {k.max():.4f}]  (N={N})")
+
+
+# =====================================================
+# Cosmology (isitgr) + template (needed by tracer theory wrapper)
+# =====================================================
+cosmo = Cosmoprimo(
+    engine="isitgr",
+    MG_parameterization="muSigma",
+    N_eff=Neff,
+    m_ncdm=[mnu],
+)
+
+# Ensure mu0 exists
+if "mu0" not in cosmo.init.params:
+    cosmo.init.params.data.append(parameter.Parameter(basename="mu0", value=0.0, fixed=False))
+cosmo.init.params["mu0"].update(
+    fixed=False,
+    value=0.0,
+    prior={"dist": "uniform", "limits": (-3.0, 3.0)},
+)
+
+# Fix common knobs if present
+if "tau_reio" in cosmo.init.params:
+    cosmo.init.params["tau_reio"].update(fixed=True)
+if "N_eff" in cosmo.init.params:
+    cosmo.init.params["N_eff"].update(fixed=True, value=Neff)
+if "m_ncdm" in cosmo.init.params:
+    cosmo.init.params["m_ncdm"].update(fixed=True, value=mnu)
+
+# Fix cosmology values
+for name, val in {
+    "h": h,
+    "omega_b": ombh2,
+    "omega_cdm": omch2,
+    "logA": np.log(1e10 * As),
+    "n_s": ns,
+}.items():
+    if name in cosmo.init.params:
+        cosmo.init.params[name].update(value=float(val), fixed=True)
+
+template = DirectPowerSpectrumTemplate(z=z_eff, fiducial=DESI(), cosmo=cosmo)
+
+
+# =====================================================
+# Build tracer theory wrappers (both emulator-backed)
+# =====================================================
+def build_theory_with_emulator(beyond_eds: bool):
+    th = fkptjaxTracerPowerSpectrumMultipoles()
+    th.init.update(
+        freedom=freedom,
+        prior_basis=prior_basis,
+        tracer=tracer_tag,
+        template=template,
+        k=k,
+        ells=list(ells),
+        b3_coev=True,
+        model=MG_model,
+        mg_variant=mg_variant,
+        beyond_eds=beyond_eds,
+        rescale_PS=RESCALE_PS,
+        shotnoise=pshotp,
+        b1_fid=b1_fid,
+    )
+    return th
+
+theory_eds  = build_theory_with_emulator(beyond_eds=False)
+theory_beds = build_theory_with_emulator(beyond_eds=True)
+
+def set_nuis(theory, base, value):
+    if base in theory.params:
+        theory.params[base].update(fixed=True, value=float(value))
+    if (base + "p") in theory.params:
+        theory.params[base + "p"].update(fixed=True, value=float(value))
+
+for th in (theory_eds, theory_beds):
+    for nm, val in [
+        ("b1", b1), ("b2", b2), ("bs2", bs2), ("b3nl", b3nl),
+        ("alpha0", alpha0), ("alpha2", alpha2), ("alpha4", alpha4),
+        ("ctilde", ctilde), ("alpha0shot", alpha0shot), ("alpha2shot", alpha2shot),
+        ("PshotP", pshotp),
+    ]:
+        set_nuis(th, nm, val)
+
+
+# =====================================================
+# Evaluate and compare @ mu0
+# =====================================================
+def split_output(P):
+    P = np.asarray(P)
+    if P.ndim == 1:
+        out = {}
+        for i, ell in enumerate(ells):
+            out[ell] = P[i*N:(i+1)*N]
+        return out
+    if P.ndim == 2:
+        return {ell: P[i] for i, ell in enumerate(ells)}
+    raise ValueError(f"Unexpected output shape: {P.shape}")
+
+P_eds  = split_output(theory_eds(mu0=float(mu0)))
+P_beds = split_output(theory_beds(mu0=float(mu0)))
+
+print(f"\n=== bEdS vs EdS (emulators only) @ mu0={mu0:.3f} ===")
+for ell in ells:
+    rel = (P_beds[ell] - P_eds[ell]) / P_eds[ell]
+    print(
+        f"ell{ell}: max|ΔP/P|={np.max(np.abs(rel)):.3e}   "
+        f"rms={np.sqrt(np.mean(rel**2)):.3e}"
+    )
+
+
+# =====================================================
+# Plot
+# =====================================================
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4), sharex=True)
+
+for ell in ells:
+    ax1.plot(k, k * P_eds[ell],  "-",  label=fr"EdS emu: $kP_{ell}$")
+    ax1.plot(k, k * P_beds[ell], "--", label=fr"bEdS emu: $kP_{ell}$")
+
+    rel = (P_beds[ell] - P_eds[ell]) / P_eds[ell]
+    ax2.plot(k, 100 * rel, "o-", label=fr"$\Delta P_{ell}/P_{ell}$ [%]")
+
+ax1.set_title(f"Emulators only: EdS vs bEdS   (mu0={mu0:.3f})")
+ax1.set_ylabel(r"$k\,P_\ell(k)$")
+ax1.grid(alpha=0.3)
+ax1.legend(ncols=1, fontsize=9)
+
+ax2.axhline(0.0, color="k", lw=1)
+ax2.axhline(0.1, color="gray", ls="--", lw=0.8)
+ax2.axhline(-0.1, color="gray", ls="--", lw=0.8)
+ax2.set_ylabel("Relative difference [%]")
+ax2.grid(alpha=0.3)
+ax2.legend(ncols=1, fontsize=9)
+
+for ax in (ax1, ax2):
+    ax.set_xlabel(r"$k \; [h\,\mathrm{Mpc}^{-1}]$")
+
+plt.tight_layout()
+plt.show()
+
 
     end function dtauda
 
@@ -2163,6 +2410,9 @@
     real(dl) :: F_k
     real(dl) :: mu_MG, omegav, omegam_t, omegak_t, gamma, gammastar !star denotes derivative with respect to natural logarithm of the scale factor (so no adotoa=(da/dtau)/a is present)
     real(dl) :: beta !for DGP
+    real(dl) :: k2, a2, Y_a, Y_0, m2_HS, m_HS !for HS
+    real(dl) :: w_0, w_a, w_dark_energy_t
+
     !binning method expression
     if((CP%ISiTGR_BIN_mueta) .or. (CP%ISiTGR_BIN_muSigma)) then
         if (CP%ISiTGR_BIN_scale_bins) then
@@ -2206,6 +2456,23 @@
             mu_MG = 1.d0 + (mu_MG - 1.d0) * F_k
         else if (CP%ISiTGR_BZ_mueta) then
             mu_MG = (1.d0 + CP%beta_1 * CP%lambda_1 * CP%lambda_1 * k * k * a**CP%exp_s) / (1.d0 + CP%lambda_1 * CP%lambda_1 * k * k * a**CP%exp_s)
+        else if (CP%ISiTGR_HS_mueta) then
+            if (abs(CP%fR0_HS) < 1.d-30) then
+                mu_MG = 1.d0
+            else
+                k2 = k*k
+                a2 = a*a
+                omegam_t = (CP%ombh2 + CP%omch2 + CP%omnuh2) / (CP%H0/100.d0)**2.d0
+
+                Y_a = OmegaDE(State, a, adotoa)
+                Y_0 = State%Omega_de
+
+                m2_HS = ((CP%H0*1000.d0/c)**2.d0) / (2.d0 * abs(CP%fR0_HS)) * &
+                        ((omegam_t*a**(-3.d0) + 4.d0*Y_a)**(2.d0 + CP%n_HS)) / &
+                        ((omegam_t + 4.d0*Y_0)**(1.d0 + CP%n_HS))
+
+                mu_MG = 1.d0 + (1.d0/3.d0) * k2 / (k2 + a2*m2_HS)
+            end if
         else
             !adding functions for scale dependence
             s2_k = (CP%lambda_k*(adotoa/a)/k)**2.d0 !s2_k needed to get s1_k
@@ -2243,11 +2510,13 @@
             end if
             mu_MG = 1.d0 + (mu_MG - 1.d0) * F_k
         else if (CP%ISiTGR_nDGP) then
-            beta = 1.d0 + 2.d0 * ( (adotoa / a) / (CP%H0 * 1000.d0 / c) ) * CP%H0rc * &
+            call CP%DarkEnergy%Effective_w_wa(w_0, w_a)
+            w_dark_energy_t = w_0 + w_a * (1.d0 - a)
+            beta = 1.d0 + 2.d0 * ( (adotoa / a) / (CP%H0 * 1000.d0 / c) ) * CP%H0r_c * &
                    ( 1.d0 &
                    - 0.5d0 * OmegaMatter(State,a,adotoa) &
                    - 0.5d0 * (1.d0 + w_dark_energy_t) * OmegaDE(State,a,adotoa) &
-                   - (1.d0/3.d0) * OmegaK(State,a,adotoa) )
+                   - (1.d0/3.d0) * OmegaCurvature(State,a,adotoa) )
 
             mu_MG = 1.d0 + 1.d0 / (3.d0 * beta)
         else
@@ -2273,7 +2542,11 @@
     real(dl) :: F_k, Fdot_k
     real(dl) :: s1_k, s2_k, s1_k_dot, s2_k_dot, omegav, omegam_t, omegak_t, gamma, gammastar, gammastarstar, term1, term2, term3 !star denotes derivative with respect to natural logarithm of the scale factor (so no adotoa=(da/dtau)/a is present)
     real(dl) :: beta !for DGP
-    
+    real(dl) :: k2, a2, Y_a, Y_0, m2_HS, m_HS !for HS
+    real(dl) :: Ydot_a, m2dot_HS, denom1, denom2 !for HS
+    real(dl) :: w_0, w_a, w_dark_energy_t
+    real(dl) :: w_dark_energy_dot
+
     !binning method expression
     if((CP%ISiTGR_BIN_mueta) .or. (CP%ISiTGR_BIN_muSigma)) then
         if (CP%ISiTGR_BIN_scale_bins) then
@@ -2346,6 +2619,31 @@
             term1 = 1.d0 + CP%lambda_1 * CP%lambda_1 * k * k * a**CP%exp_s
             mu_MG = (1.d0 + CP%beta_1 * CP%lambda_1 * CP%lambda_1 * k * k * a**CP%exp_s) / term1
             mudot_MG = CP%exp_s * adotoa * (mu_MG - 1.d0)/term1
+        else if (CP%ISiTGR_HS_mueta) then
+            if (abs(CP%fR0_HS) < 1.d-30) then
+                mudot_MG = 0.d0
+            else
+                k2 = k*k
+                a2 = a*a
+                omegam_t = (CP%ombh2 + CP%omch2 + CP%omnuh2) / (CP%H0/100.d0)**2.d0
+
+                Y_a = OmegaDE(State, a, adotoa)
+                Y_0 = State%Omega_de
+
+                Ydot_a = OmegaDEdot(State,a,adotoa,Hdot)
+
+                m2_HS = ((CP%H0*1000.d0/c)**2.d0) / (2.d0 * abs(CP%fR0_HS)) * &
+                        ((omegam_t*a**(-3.d0) + 4.d0*Y_a)**(2.d0 + CP%n_HS)) / &
+                        ((omegam_t + 4.d0*Y_0)**(1.d0 + CP%n_HS))
+
+                m2dot_HS = m2_HS * (2.d0 + CP%n_HS) * &
+                           ( -3.d0*omegam_t*a**(-4.d0)*adotoa + 4.d0*Ydot_a ) / &
+                           ( omegam_t*a**(-3.d0) + 4.d0*Y_a )
+
+                denom1 = k2 + a2*m2_HS
+
+                mudot_MG = -(1.d0/3.d0) * k2 * ( 2.d0*a*adotoa*m2_HS + a2*m2dot_HS ) / (denom1*denom1)
+            end if
         else
               !adding an extra factor for scale dependence
               s2_k = (CP%lambda_k*(adotoa/a)/k)**2.d0
@@ -2401,25 +2699,28 @@
             mu_MG = mu_MG_pivot + (mu_MG_undamped - mu_MG_pivot) * F_k
             mudot_MG = (1.d0 - F_k) * mudot_MG_pivot  + F_k * mudot_MG_undamped + (mu_MG_undamped - mu_MG_pivot) * Fdot_k
         else if (CP%ISiTGR_nDGP) then
-            beta = 1.d0 + 2.d0 * ((adotoa / a) * c / (CP%H0 * 1000.d0)) * CP%H0rc * &
+            call CP%DarkEnergy%Effective_w_wa(w_0, w_a)
+            w_dark_energy_t = w_0 + w_a * (1.d0 - a)
+            w_dark_energy_dot = -w_a * a * adotoa
+            beta = 1.d0 + 2.d0 * ((adotoa / a) * c / (CP%H0 * 1000.d0)) * CP%H0r_c * &
                    ( 1.d0 &
                    - 0.5d0 * OmegaMatter(State,a,adotoa) &
                    - 0.5d0 * (1.d0 + w_dark_energy_t) * OmegaDE(State,a,adotoa) &
-                   - (1.d0/3.d0) * OmegaK(State,a,adotoa) )
+                   - (1.d0/3.d0) * OmegaCurvature(State,a,adotoa) )
 
             mu_MG = 1.d0 + 1.d0 / (3.d0 * beta)
 
-            mudot_MG = -(2.d0 * CP%H0rc / (3.d0 * beta**2)) * &
+            mudot_MG = -(2.d0 * CP%H0r_c / (3.d0 * beta**2)) * &
                        ( (((Hdot - 2.d0*adotoa**2) / a) * c / (CP%H0 * 1000.d0)) * &
                          ( 1.d0 &
                          - 0.5d0 * OmegaMatter(State,a,adotoa) &
                          - 0.5d0 * (1.d0 + w_dark_energy_t) * OmegaDE(State,a,adotoa) &
-                         - (1.d0/3.d0) * OmegaK(State,a,adotoa) ) &
+                         - (1.d0/3.d0) * OmegaCurvature(State,a,adotoa) ) &
                        + ((adotoa / a) * c / (CP%H0 * 1000.d0)) * &
                          ( -0.5d0 * OmegaMatterdot(State,a,adotoa,Hdot) &
                          - 0.5d0 * ( w_dark_energy_dot * OmegaDE(State,a,adotoa) + &
                                      (1.d0 + w_dark_energy_t) * OmegaDEdot(State,a,adotoa,Hdot) ) &
-                         - (1.d0/3.d0) * OmegaKdot(State,a,adotoa,Hdot) ) )
+                         - (1.d0/3.d0) * OmegaCurvaturedot(State,a,adotoa,Hdot) ) )
         else
             omegav = State%Omega_de ! Omega_de is total dark energy density today
             !adding an extra factor for scale dependence
@@ -2443,6 +2744,8 @@
     real(dl) ISiTGR_eta
     real(dl) :: s1_k, s2_k
     real(dl) :: eta_MG
+    real(dl) :: k2, a2, Y_a, Y_0, m2_HS, m_HS !for HS
+    real(dl) :: omegam_t
     
     !binning method expression
     if(CP%ISiTGR_BIN_mueta) then
@@ -2461,6 +2764,23 @@
             eta_MG = 1.d0
         else if (CP%ISiTGR_BZ_mueta) then
             eta_MG = (1.d0 + CP%beta_2 * CP%lambda_2 * CP%lambda_2 * k * k * a**CP%exp_s) / (1.d0 + CP%lambda_2 * CP%lambda_2 * k * k * a**CP%exp_s)
+        else if (CP%ISiTGR_HS_mueta) then
+            if (abs(CP%fR0_HS) < 1.d-30) then
+                eta_MG = 1.d0
+            else
+                k2 = k*k
+                a2 = a*a
+                omegam_t = (CP%ombh2 + CP%omch2 + CP%omnuh2) / (CP%H0/100.d0)**2.d0
+
+                Y_a = OmegaDE(State, a, adotoa)
+                Y_0 = State%Omega_de
+
+                m2_HS = ((CP%H0*1000.d0/c)**2.d0) / (2.d0 * abs(CP%fR0_HS)) * &
+                        ((omegam_t*a**(-3.d0) + 4.d0*Y_a)**(2.d0 + CP%n_HS)) / &
+                        ((omegam_t + 4.d0*Y_0)**(1.d0 + CP%n_HS))
+
+                eta_MG = (2.d0*k2 + 3.d0*a2*m2_HS) / (4.d0*k2 + 3.d0*a2*m2_HS)
+            end if
         else
             !adding an extra factor for scale dependence
             s2_k = (CP%lambda_k*(adotoa/a)/k)**2.d0
@@ -2481,6 +2801,9 @@
     real(dl) ISiTGR_eta_dot
     real(dl) :: etadot_MG
     real(dl) :: s1_k, s2_k, s1_k_dot, s2_k_dot, term1, term2, term3, eta_MG
+    real(dl) :: k2, a2, Y_a, Y_0, m2_HS, m_HS !for HS
+    real(dl) :: Ydot_a, m2dot_HS, denom1, denom2 !for HS
+    real(dl) :: omegam_t
     
     !binning method expression
     if(CP%ISiTGR_BIN_mueta) then
@@ -2500,6 +2823,31 @@
             term1 = 1.d0 + CP%lambda_2 * CP%lambda_2 * k * k * a**CP%exp_s
             eta_MG = (1.d0 + CP%beta_2 * CP%lambda_2 * CP%lambda_2 * k * k * a**CP%exp_s) / term1
             etadot_MG = CP%exp_s * adotoa * (eta_MG - 1.d0)/term1
+        else if (CP%ISiTGR_HS_mueta) then
+            if (abs(CP%fR0_HS) < 1.d-30) then
+                etadot_MG = 0.d0
+            else
+                k2 = k*k
+                a2 = a*a
+                omegam_t = (CP%ombh2 + CP%omch2 + CP%omnuh2) / (CP%H0/100.d0)**2.d0
+
+                Y_a = OmegaDE(State, a, adotoa)
+                Y_0 = State%Omega_de
+
+                Ydot_a = OmegaDEdot(State,a,adotoa,Hdot)
+
+                m2_HS = ((CP%H0*1000.d0/c)**2.d0) / (2.d0 * abs(CP%fR0_HS)) * &
+                        ((omegam_t*a**(-3.d0) + 4.d0*Y_a)**(2.d0 + CP%n_HS)) / &
+                        ((omegam_t + 4.d0*Y_0)**(1.d0 + CP%n_HS))
+
+                m2dot_HS = m2_HS * (2.d0 + CP%n_HS) * &
+                           ( -3.d0*omegam_t*a**(-4.d0)*adotoa + 4.d0*Ydot_a ) / &
+                           ( omegam_t*a**(-3.d0) + 4.d0*Y_a )
+
+                denom2 = 4.d0*k2 + 3.d0*a2*m2_HS
+
+                etadot_MG = 6.d0*k2 * ( 2.d0*a*adotoa*m2_HS + a2*m2dot_HS ) / (denom2*denom2)
+            end if
         else
             !adding an extra factor for scale dependence
             s2_k = (CP%lambda_k*(adotoa/a)/k)**2.d0
@@ -2733,6 +3081,26 @@
 
     
     end function OmegaMatter
+
+    function OmegaMatterdot(State, a, adotoa, Hdot)
+        use constants
+        use classes
+        class(CAMBdata), intent(in) :: State
+        real(dl), intent(in) :: a, adotoa, Hdot
+        real(dl) :: OmegaMatterdot
+        real(dl) :: OmegaMatterToday, denom, denomdot
+
+        OmegaMatterToday = (CP%ombh2 + CP%omch2 + CP%omnuh2) / (CP%H0/100.d0)**2.d0
+
+        denom = OmegaMatterToday*a**(-3.d0) + CP%omk*a**(-2.d0) + OmegaDE(State,a,adotoa)
+
+        denomdot = -3.d0*OmegaMatterToday*a**(-4.d0)*(a*adotoa) &
+                   -2.d0*CP%omk*a**(-3.d0)*(a*adotoa) &
+                   + OmegaDEdot(State,a,adotoa,Hdot)
+
+        OmegaMatterdot = ( -3.d0*OmegaMatterToday*a**(-4.d0)*(a*adotoa)*denom &
+                          -OmegaMatterToday*a**(-3.d0)*denomdot ) / denom**2.d0
+    end function OmegaMatterdot
     
     function OmegaCurvature(State, a, adotoa)
         use constants
@@ -2746,6 +3114,27 @@
         OmegaCurvature = OmegaCurvatureToday*a**(-2.d0)/(OmegaMatterToday*a**(-3.d0) + CP%omk*a**(-2.d0) + State%Omega_de) !* ((CP%H0*1000.d0/c)/(adotoa/a))**2.d0 * a**(-2.d0) 
     
     end function OmegaCurvature
+
+    function OmegaCurvaturedot(State, a, adotoa, Hdot)
+        use constants
+        use classes
+        class(CAMBdata), intent(in) :: State
+        real(dl), intent(in) :: a, adotoa, Hdot
+        real(dl) :: OmegaCurvaturedot
+        real(dl) :: OmegaMatterToday, OmegaCurvatureToday, denom, denomdot
+
+        OmegaCurvatureToday = CP%omk
+        OmegaMatterToday = (CP%ombh2 + CP%omch2 + CP%omnuh2) / (CP%H0/100.d0)**2.d0
+
+        denom = OmegaMatterToday*a**(-3.d0) + CP%omk*a**(-2.d0) + OmegaDE(State,a,adotoa)
+
+        denomdot = -3.d0*OmegaMatterToday*a**(-4.d0)*(a*adotoa) &
+                   -2.d0*CP%omk*a**(-3.d0)*(a*adotoa) &
+                   + OmegaDEdot(State,a,adotoa,Hdot)
+
+        OmegaCurvaturedot = ( -2.d0*OmegaCurvatureToday*a**(-3.d0)*(a*adotoa)*denom &
+                             -OmegaCurvatureToday*a**(-2.d0)*denomdot ) / denom**2.d0
+    end function OmegaCurvaturedot
     ! CGQ End of patch for Universe Matter Content time-evolution
     !################### Modified Gravity Functions of ISiTGR Parameters #####################
     !< ISiTGR MOD END

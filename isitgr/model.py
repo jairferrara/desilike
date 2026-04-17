@@ -392,7 +392,7 @@ class CAMBparams(F2003Class):
         ("E22", c_double, "MG parameter for (mu,eta) parametrization"),
         ("c1", c_double, "MG parameter for scale-dependence"),
         ("c2", c_double, "MG parameter for scale-dependence"),
-        ("Lambda", c_double, "MG parameter for scale-dependence"),
+        ("lambda_k", c_double, "MG parameter for scale-dependence"),
         ("mu0", c_double, "MG parameter for (mu,Sigma) parametrization"),
         ("Sigma0", c_double, "MG parameter for (mu,Sigma) parametrization"),
         ("mu1", c_double, "Bin parameter for (mu,eta) or (mu,Sigma) parameterization"),
@@ -423,7 +423,9 @@ class CAMBparams(F2003Class):
         ("gamma_a", c_double, "strenght of the redshift evolution of the growth index (assuming redshift evolution)"),
         ("t_k", c_double, "scale damping strenght (for growth index implementation)"),
         ("d_s", c_double, "scale damping smoothing exponent (for growth index implementation)"),
-        ("r_c", c_double, "value for the nDGP characteristic mass scale (in H0 units)"),
+        ("H0r_c", c_double, "value for the nDGP characteristic mass scale (in H0 units)"),
+        ("fR0_HS", c_double, "Hu-Sawicki f(R) parameter fR0"),
+        ("n_HS", c_double, "Hu-Sawicki f(R) power-law index n"),
         ("ISiTGR_mueta", c_bool, "flag to use (mu,eta) parametrization for functional form"),
         ("ISiTGR_muSigma", c_bool, "flag to use (mu,Sigma) parametrization for functional form"),
         ("ISiTGR_BIN_mueta", c_bool, "flag to use (mu,eta) parametrization for binning method"),
@@ -436,6 +438,7 @@ class CAMBparams(F2003Class):
         ("ISiTGR_growth_index_Taylor", c_bool, "flag to assume a redshift evolution for the growth index (based on a Taylor series in a around a=1)."),
         ("ISiTGR_growth_index_Wen", c_bool, "flag to assume a redshift evolution for the growth index (based on Arxiv:2304.07281 parameterization by Y. Wen et al.)."),
         ("ISiTGR_nDGP", c_bool, "allow for nDGP gravity"),
+        ("ISiTGR_HS_mueta", c_bool, "allow for Hu-Sawicki f(R) in the (mu,eta) representation"),
         ("GR", c_int, "GR switch on/off")
         #< ISiTGR MOD END
     ]
@@ -711,12 +714,15 @@ class CAMBparams(F2003Class):
         t_k=10.0, 
         d_s=2.0,
         r_c=0.0,
+        fR0_HS=0.0,
+        n_HS=1.0,
         use_growth_index=None, 
         damping_yukawa=False,              
         use_BZ_form=False,
         redshift_bins=None,
         scale_bins=None,
         use_nDGP=False,
+        use_HS_form=False,
     ):
         r"""
         Sets cosmological parameters in terms of physical densities and parameters (e.g. as used in Planck analyses).
@@ -820,107 +826,135 @@ class CAMBparams(F2003Class):
      #< ISiTGR MOD END
 
 		#> ISiTGR MOD START: Flags for ISiTGR python wrapper to work with different parameterizations
-#		**************************************** ISiTGR Modifications **************************************************
-#       Flags to work with the different MG functional parameterizations. The parameterizations that ISiTGR can handle
-#		for functional form of MG parameters are:
-#		i) Planck model with E11 and E22: In the mueta parameterization
-#		ii) DES model based on mu0 and Sigma0: In the muSigma parameterization
-#		iii) Binning method in redshift: Valid in both mueta or muSigma representations
-#		iv) Binning method in redshift and scale: Valid in both mueta or muSigma representations
-#       v) BZ model: In the mueta representation
-#		vi) Growth index: Valid in both mueta or muSigma representations
-#		**************************************** ISiTGR Modifications **************************************************
+        #**************************************** ISiTGR Modifications **************************************************
+        #Flags to work with the different MG functional parameterizations. The parameterizations that ISiTGR can handle
+        #for functional form of MG parameters are:
+        #i) Planck model with E11 and E22: In the mueta parameterization
+        #ii) DES model based on mu0 and Sigma0: In the muSigma parameterization
+        #iii) Binning method in redshift: Valid in both mueta or muSigma representations
+        #iv) Binning method in redshift and scale: Valid in both mueta or muSigma representations
+        #v) BZ model: In the mueta representation
+        #vi) Growth index: Valid in both mueta or muSigma representations
+        #**************************************** ISiTGR Modifications **************************************************
+        
+        #Reset MG flags
+        self.ISiTGR_mueta = False
+        self.ISiTGR_muSigma = False
+        self.ISiTGR_BIN_mueta = False
+        self.ISiTGR_BIN_muSigma = False
+        self.ISiTGR_BIN_scale_bins = False
+        self.ISiTGR_BZ_mueta = False
+        self.ISiTGR_gammaL_noslip = False
+        self.ISiTGR_gammaL_onlygrowth = False
+        self.ISiTGR_gammaL_yukawa_damping = False
+        self.ISiTGR_growth_index_Taylor = False
+        self.ISiTGR_growth_index_Wen = False
+        self.ISiTGR_nDGP = False
+        self.ISiTGR_HS_mueta = False
+
+        # --------------------------------------------------
+        # MG consistency checks
+        # --------------------------------------------------
+        if MG_parameterization not in ("mueta", "muSigma", "GR"):
+            raise CAMBError('Select a valid parameterization: "mueta", "muSigma", or "GR".')
+
+        # GR should not be combined with any MG mode
+        if MG_parameterization == "GR":
+            if any([
+                redshift_bins,
+                scale_bins,
+                use_BZ_form,
+                use_HS_form,
+                use_nDGP,
+                use_growth_index is not None,
+            ]):
+                raise CAMBError('MG_parameterization="GR" cannot be combined with MG options.')
+        else:
+            # Count mutually-exclusive MG model choices
+            active_modes = [
+                bool(redshift_bins),
+                bool(use_BZ_form),
+                bool(use_HS_form),
+                bool(use_nDGP),
+                use_growth_index is not None,
+            ]
+
+            if sum(active_modes) > 1:
+                raise CAMBError(
+                    "Choose only one MG mode among: redshift_bins, use_BZ_form, "
+                    "use_HS_form, use_nDGP, or use_growth_index."
+                )
+
+            # scale_bins only makes sense together with redshift_bins
+            if scale_bins and not redshift_bins:
+                raise CAMBError("scale_bins=True requires redshift_bins=True.")
+
+            # BZ is only implemented in mueta
+            if use_BZ_form and MG_parameterization != "mueta":
+                raise CAMBError('use_BZ_form=True requires MG_parameterization="mueta".')
+
+            # HS is only implemented in mueta
+            if use_HS_form and MG_parameterization != "mueta":
+                raise CAMBError('use_HS_form=True requires MG_parameterization="mueta".')
+
+            # nDGP is only implemented in muSigma
+            if use_nDGP and MG_parameterization != "muSigma":
+                raise CAMBError('use_nDGP=True requires MG_parameterization="muSigma".')
+
+            # growth index is allowed in both, but only with valid labels
+            if use_growth_index is not None and use_growth_index not in ("constant", "taylor", "wen"):
+                raise CAMBError('Set use_growth_index to either "constant", "taylor", or "wen".')
+
+            # HS-specific parameter validation
+            if use_HS_form:
+                if abs(fR0_HS) < 1.0e-30:
+                    raise CAMBError("For use_HS_form=True, provide a nonzero fR0_HS.")
+                if n_HS < 0.0:
+                    raise CAMBError("For use_HS_form=True, n_HS must be non-negative.")
+
+        # --------------------------------------------------
+        # Read MG models
+        # --------------------------------------------------
+
 		#(mu,eta)
         if MG_parameterization == "mueta":
             self.GR = int(0)
+
             if redshift_bins is True:
+                if use_HS_form or use_BZ_form or (use_growth_index is not None):
+                    raise CAMBError("Binning cannot be combined with HS, BZ, or growth-index modes.")
                 self.ISiTGR_BIN_mueta = True
-                self.mu1=mu1
-                self.mu2=mu2
-                self.mu3=mu3
-                self.mu4=mu4
-                self.eta1=eta1
-                self.eta2=eta2
-                self.eta3=eta3
-                self.eta4=eta4
-                self.z_div=z_div
-                self.z_TGR=z_TGR
-                self.z_tw=z_tw
+                self.mu1 = mu1
+                self.mu2 = mu2
+                self.mu3 = mu3
+                self.mu4 = mu4
+                self.eta1 = eta1
+                self.eta2 = eta2
+                self.eta3 = eta3
+                self.eta4 = eta4
+                self.z_div = z_div
+                self.z_TGR = z_TGR
+                self.z_tw = z_tw
                 if scale_bins is True:
                     self.ISiTGR_BIN_scale_bins = True
-                    self.k_c=k_c
-                    self.k_TGR=k_TGR
-                    self.k_S=k_S
-                    self.k_tw=k_tw
-            #(mu,eta=1) for constant growth index
-            if use_growth_index is not None:
+                    self.k_c = k_c
+                    self.k_TGR = k_TGR
+                    self.k_S = k_S
+                    self.k_tw = k_tw
+
+            elif use_HS_form is True:
+                self.ISiTGR_mueta = True
+                self.ISiTGR_HS_mueta = True
+                self.fR0_HS = fR0_HS
+                self.n_HS = n_HS
+
+            elif use_growth_index is not None:
                 self.ISiTGR_mueta = True
                 self.ISiTGR_gammaL_noslip = True
                 self.t_k = t_k
                 self.d_s = d_s
-                if damping_yukawa is True:
-                    self.ISiTGR_gammaL_yukawa_damping = True
-                else:
-                    self.ISiTGR_gammaL_yukawa_damping = False
-                if use_growth_index == "constant":
-                    self.gamma_0 = gamma_0
-                elif use_growth_index == "taylor":
-                    self.ISiTGR_growth_index_Taylor = True
-                    self.gamma_0 = gamma_0
-                    self.gamma_a = gamma_a
-                elif use_growth_index == "wen":     
-                    self.ISiTGR_growth_index_Wen = True
-                    self.gamma_0 = gamma_0
-                    self.gamma_a = gamma_a
-                else:
-                    raise CAMBError('Set use_growth_index to either "constant", "taylor", or "wen". ')
-            elif use_BZ_form is True:
-                self.ISiTGR_mueta = True
-                self.ISiTGR_BZ_mueta = True
-                self.beta_1 = beta_1
-                self.beta_2 = beta_2
-                self.lambda_1 = lambda_1
-                self.lambda_2 = lambda_2
-                self.exp_s = exp_s
-            else:
-                self.ISiTGR_mueta = True
-                self.E11=E11
-                self.E22=E22
-                self.c1=c1
-                self.c2=c2
-                self.lambda_k=lambda_k
-        #(mu,Sigma)
-        if MG_parameterization == "muSigma":
-            self.GR = int(0)
-            if redshift_bins is True:
-                self.ISiTGR_BIN_muSigma = True
-                self.mu1=mu1
-                self.mu2=mu2
-                self.mu3=mu3
-                self.mu4=mu4
-                self.Sigma1=Sigma1
-                self.Sigma2=Sigma2
-                self.Sigma3=Sigma3
-                self.Sigma4=Sigma4
-                self.z_div=z_div
-                self.z_TGR=z_TGR
-                self.z_tw=z_tw
-                if scale_bins is True:
-                    self.ISiTGR_BIN_scale_bins = True
-                    self.k_c=k_c
-                    self.k_TGR=k_TGR
-                    self.k_S=k_S
-                    self.k_tw=k_tw
-            #(mu,Sigma=1) for constant growth index
-            if use_growth_index is not None:
-                self.ISiTGR_muSigma = True
-                self.ISiTGR_gammaL_onlygrowth = True
-                self.t_k = t_k
-                self.d_s = d_s
-                if damping_yukawa is True:
-                    self.ISiTGR_gammaL_yukawa_damping = True
-                else:
-                    self.ISiTGR_gammaL_yukawa_damping = False
+                self.ISiTGR_gammaL_yukawa_damping = bool(damping_yukawa)
+
                 if use_growth_index == "constant":
                     self.gamma_0 = gamma_0
                 elif use_growth_index == "taylor":
@@ -932,22 +966,92 @@ class CAMBparams(F2003Class):
                     self.gamma_0 = gamma_0
                     self.gamma_a = gamma_a
                 else:
-                    raise CAMBError('Set use_growth_index to either "constant", "taylor", or "wen". ')
+                    raise CAMBError('Set use_growth_index to either "constant", "taylor", or "wen".')
+
+            elif use_BZ_form is True:
+                self.ISiTGR_mueta = True
+                self.ISiTGR_BZ_mueta = True
+                self.beta_1 = beta_1
+                self.beta_2 = beta_2
+                self.lambda_1 = lambda_1
+                self.lambda_2 = lambda_2
+                self.exp_s = exp_s
+
+            else:
+                self.ISiTGR_mueta = True
+                self.E11 = E11
+                self.E22 = E22
+                self.c1 = c1
+                self.c2 = c2
+                self.lambda_k = lambda_k
+                
+        #(mu,Sigma)
+        if MG_parameterization == "muSigma":
+            self.GR = int(0)
+
+            if use_HS_form:
+                raise CAMBError('Hu-Sawicki f(R) is only implemented for MG_parameterization="mueta".')
+
+            if redshift_bins is True:
+                if use_nDGP or (use_growth_index is not None):
+                    raise CAMBError("Binning cannot be combined with nDGP or growth-index modes.")
+                self.ISiTGR_BIN_muSigma = True
+                self.mu1 = mu1
+                self.mu2 = mu2
+                self.mu3 = mu3
+                self.mu4 = mu4
+                self.Sigma1 = Sigma1
+                self.Sigma2 = Sigma2
+                self.Sigma3 = Sigma3
+                self.Sigma4 = Sigma4
+                self.z_div = z_div
+                self.z_TGR = z_TGR
+                self.z_tw = z_tw
+                if scale_bins is True:
+                    self.ISiTGR_BIN_scale_bins = True
+                    self.k_c = k_c
+                    self.k_TGR = k_TGR
+                    self.k_S = k_S
+                    self.k_tw = k_tw
+
+            elif use_growth_index is not None:
+                self.ISiTGR_muSigma = True
+                self.ISiTGR_gammaL_onlygrowth = True
+                self.t_k = t_k
+                self.d_s = d_s
+                self.ISiTGR_gammaL_yukawa_damping = bool(damping_yukawa)
+
+                if use_growth_index == "constant":
+                    self.gamma_0 = gamma_0
+                elif use_growth_index == "taylor":
+                    self.ISiTGR_growth_index_Taylor = True
+                    self.gamma_0 = gamma_0
+                    self.gamma_a = gamma_a
+                elif use_growth_index == "wen":
+                    self.ISiTGR_growth_index_Wen = True
+                    self.gamma_0 = gamma_0
+                    self.gamma_a = gamma_a
+                else:
+                    raise CAMBError('Set use_growth_index to either "constant", "taylor", or "wen".')
+
             elif use_nDGP is True:
+                self.ISiTGR_muSigma = True
                 self.ISiTGR_nDGP = True
                 self.H0r_c = r_c
+
             else:
                 self.ISiTGR_muSigma = True
-                self.mu0=mu0
-                self.Sigma0=Sigma0
-                self.c1=c1
-                self.c2=c2
-                self.lambda_k=lambda_k
+                self.mu0 = mu0
+                self.Sigma0 = Sigma0
+                self.c1 = c1
+                self.c2 = c2
+                self.lambda_k = lambda_k
+                
         if MG_parameterization == "GR":
             self.GR = int(1)
 		# No other parameterization is accepted
-        if MG_parameterization != "mueta" and MG_parameterization != "muSigma" and MG_parameterization != "GR":
-            raise CAMBError('Select a valid parameterization: mueta or muSigma')
+        if MG_parameterization not in ("mueta", "muSigma", "GR"):
+            raise CAMBError('Select a valid parameterization: "mueta", "muSigma", or "GR".')
 		#< ISiTGR MOD END
 
         if YHe is None:

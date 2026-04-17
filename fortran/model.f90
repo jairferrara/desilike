@@ -233,6 +233,9 @@
         real(dl) :: d_s = 2._dl
         !6) nDGP
         real(dl) :: H0r_c = 0.0
+        !7) Hu-Sawicki quasi-static f(R), matched to fkpt
+        real(dl) :: fR0_HS = 0._dl
+        real(dl) :: n_HS   = 1._dl
         !Logical flags to change between models
         logical :: ISiTGR_mueta=.false. !for functional form
         logical :: ISiTGR_muSigma=.false. !for functional form
@@ -246,6 +249,7 @@
         logical :: ISiTGR_growth_index_Taylor=.false. !use redshift evolution for gamma (based on a Taylor series in a around a=1).
 		logical :: ISiTGR_growth_index_Wen=.false. !use redshift evolution for gamma (based on Arxiv:2304.07281 parameterization by Y. Wen et al.).
         logical :: ISiTGR_nDGP=.false. !allow for nDGP gravity
+        logical :: ISiTGR_HS_mueta = .false.
 		integer :: GR = 1 !to use default GR without MG, GR=0 means MG formalism is on
 		!< ISiTGR MOD END
 
